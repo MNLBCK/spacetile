@@ -1,0 +1,11 @@
+{
+  "/Users/guppi/Code/spacetile/Sources/SpaceTile/Config.swift" : {
+    "abi-baseline-json" : "/Users/guppi/Code/spacetile/.build/out/Intermediates.noindex/spacetile.build/Release/spacetile-p.build/Objects-normal/arm64/SpaceTile.abi.json",
+    "const-values" : "/Users/guppi/Code/spacetile/.build/out/Intermediates.noindex/spacetile.build/Release/spacetile-p.build/Objects-normal/arm64/spacetile-primary.swiftconstvalues",
+    "dependencies" : "/Users/guppi/Code/spacetile/.build/out/Intermediates.noindex/spacetile.build/Release/spacetile-p.build/Objects-normal/arm64/spacetile-primary.d",
+    "diagnostics" : "/Users/guppi/Code/spacetile/.build/out/Intermediates.noindex/spacetile.build/Release/spacetile-p.build/Objects-normal/arm64/spacetile-primary.dia",
+    "swiftdoc" : "/Users/guppi/Code/spacetile/.build/out/Intermediates.noindex/spacetile.build/Release/spacetile-p.build/Objects-normal/arm64/SpaceTile.swiftdoc",
+    "swiftmodule" : "/Users/guppi/Code/spacetile/.build/out/Intermediates.noindex/spacetile.build/Release/spacetile-p.build/Objects-normal/arm64/SpaceTile.swiftmodule",
+    "swiftsourceinfo" : "/Users/guppi/Code/spacetile/.build/out/Intermediates.noindex/spacetile.build/Release/spacetile-p.build/Objects-normal/arm64/SpaceTile.swiftsourceinfo"
+  }
+}

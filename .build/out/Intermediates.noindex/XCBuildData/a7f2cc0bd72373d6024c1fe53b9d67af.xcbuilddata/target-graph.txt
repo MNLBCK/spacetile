@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'AllExcludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'spacetile-product' in project 'spacetile'
+Target 'spacetile-product' in project 'spacetile' (no dependencies)
