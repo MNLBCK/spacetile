@@ -155,13 +155,18 @@ class WindowManager {
         )
 
         // Apply frames
-        if config.animationMode == "smooth" && config.animationDuration > 0.05 {
+        if config.animationMode == "smooth" && config.animationDuration > 0.02 {
             var moves: [(element: AXUIElement, start: CGRect, target: CGRect)] = []
             for (i, win) in windows.enumerated() {
                 if win.isLocked { continue }
                 moves.append((element: win.element, start: win.currentFrame, target: frames[i]))
             }
-            animateWindowsSmooth(moves: moves, duration: config.animationDuration)
+            animateWindowsSmooth(
+                moves: moves,
+                duration: config.animationDuration,
+                steps: config.animationSteps,
+                freezeContent: config.freezeContentDuringResize
+            )
         } else {
             for (i, win) in windows.enumerated() {
                 if win.isLocked { continue }
@@ -440,29 +445,75 @@ class WindowManager {
         return resultFrames
     }
 
-    private func animateWindowsSmooth(moves: [(element: AXUIElement, start: CGRect, target: CGRect)], duration: Double) {
-        // Fast 4-step glide (zero lag, avoids IPC congestion)
-        let steps = 4
-        let interval = duration / Double(steps)
+    // Private SkyLight SPIs for atomic display compositor updates
+    typealias CGSConnectionID = UInt32
+    @_silgen_name("CGSMainConnectionID") private static func CGSMainConnectionID() -> CGSConnectionID
+    @_silgen_name("CGSDisableUpdate") private static func CGSDisableUpdate(_ cid: CGSConnectionID) -> Int32
+    @_silgen_name("CGSReenableUpdate") private static func CGSReenableUpdate(_ cid: CGSConnectionID) -> Int32
 
-        for step in 1...steps {
-            let progress = Double(step) / Double(steps)
-            let ease = 1.0 - pow(1.0 - progress, 2.0)
+    private func animateWindowsSmooth(
+        moves: [(element: AXUIElement, start: CGRect, target: CGRect)],
+        duration: Double,
+        steps: Int,
+        freezeContent: Bool
+    ) {
+        let totalSteps = max(4, min(24, steps))
+        let interval = duration / Double(totalSteps)
+        let cid = freezeContent ? WindowManager.CGSMainConnectionID() : 0
+
+        for step in 1...totalSteps {
+            let progress = Double(step) / Double(totalSteps)
+            // Cubic easeInOut curve for natural acceleration and deceleration
+            let ease: Double
+            if progress < 0.5 {
+                ease = 4.0 * progress * progress * progress
+            } else {
+                ease = 1.0 - pow(-2.0 * progress + 2.0, 3.0) / 2.0
+            }
+
+            // Suspend compositor flushing across window changes for this frame
+            if freezeContent && cid != 0 {
+                _ = WindowManager.CGSDisableUpdate(cid)
+            }
 
             for move in moves {
                 let curX = move.start.origin.x + (move.target.origin.x - move.start.origin.x) * ease
                 let curY = move.start.origin.y + (move.target.origin.y - move.start.origin.y) * ease
                 let curW = move.start.size.width + (move.target.size.width - move.start.size.width) * ease
                 let curH = move.start.size.height + (move.target.size.height - move.start.size.height) * ease
-                setWindowFrameImmediate(move.element, target: CGRect(x: curX, y: curY, width: curW, height: curH))
+                setWindowFrameStep(move.element, target: CGRect(x: curX, y: curY, width: curW, height: curH))
             }
-            if step < steps {
+
+            // Re-enable compositor flushing so WindowServer composites all windows together
+            if freezeContent && cid != 0 {
+                _ = WindowManager.CGSReenableUpdate(cid)
+            }
+
+            if step < totalSteps {
                 usleep(useconds_t(interval * 1_000_000.0))
             }
         }
 
+        // Final snap: ensure exact target frames
+        if freezeContent && cid != 0 {
+            _ = WindowManager.CGSDisableUpdate(cid)
+        }
         for move in moves {
             setWindowFrameImmediate(move.element, target: move.target)
+        }
+        if freezeContent && cid != 0 {
+            _ = WindowManager.CGSReenableUpdate(cid)
+        }
+    }
+
+    private func setWindowFrameStep(_ element: AXUIElement, target: CGRect) {
+        var size = target.size
+        var pos = target.origin
+        if let valSize = AXValueCreate(.cgSize, &size) {
+            AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, valSize)
+        }
+        if let valPos = AXValueCreate(.cgPoint, &pos) {
+            AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
         }
     }
 

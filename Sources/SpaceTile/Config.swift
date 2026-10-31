@@ -40,9 +40,11 @@ struct Config: Codable {
     var margin: Double
     var singleWindowMode: String // "centered" or "maximized"
 
-    // Animation: "instant" (recommended, zero lag) or "smooth" (4-step glide)
+    // Animation: "instant" (recommended, zero lag) or "smooth" (multi-step interpolation)
     var animationMode: String
     var animationDuration: Double
+    var animationSteps: Int
+    var freezeContentDuringResize: Bool
 
     // Grid & Weights
     var appWeights: [AppWeightConfig]
@@ -51,17 +53,37 @@ struct Config: Codable {
 
     var ignoredApps: [String]
 
-    static let `default` = Config(
-        shortcut: ShortcutConfig(modifiers: ["hyper"], key: "space"),
-        masterShortcut: ShortcutConfig(modifiers: ["hyper"], key: "return"),
-        lockShortcut: ShortcutConfig(modifiers: ["hyper"], key: "l"),
-        guiShortcut: ShortcutConfig(modifiers: ["hyper"], key: "s"),
-        gap: 10.0,
-        margin: 12.0,
-        singleWindowMode: "centered",
-        animationMode: "instant",
-        animationDuration: 0.12,
-        appWeights: [
+    init(
+        shortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "space"),
+        masterShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "return"),
+        lockShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "l"),
+        guiShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "s"),
+        gap: Double = 10.0,
+        margin: Double = 12.0,
+        singleWindowMode: String = "centered",
+        animationMode: String = "smooth",
+        animationDuration: Double = 0.18,
+        animationSteps: Int = 10,
+        freezeContentDuringResize: Bool = true,
+        appWeights: [AppWeightConfig]? = nil,
+        sideBySideForNotesAndBrowser: Bool = true,
+        enableSpaceLearning: Bool = true,
+        ignoredApps: [String]? = nil
+    ) {
+        self.shortcut = shortcut
+        self.masterShortcut = masterShortcut
+        self.lockShortcut = lockShortcut
+        self.guiShortcut = guiShortcut
+        self.gap = gap
+        self.margin = margin
+        self.singleWindowMode = singleWindowMode
+        self.animationMode = animationMode
+        self.animationDuration = animationDuration
+        self.animationSteps = animationSteps
+        self.freezeContentDuringResize = freezeContentDuringResize
+        self.sideBySideForNotesAndBrowser = sideBySideForNotesAndBrowser
+        self.enableSpaceLearning = enableSpaceLearning
+        self.appWeights = appWeights ?? [
             AppWeightConfig(appName: "iTerm2", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
             AppWeightConfig(appName: "Terminal", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
             AppWeightConfig(appName: "Ghostty", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
@@ -76,10 +98,8 @@ struct Config: Codable {
             AppWeightConfig(appName: "Bear", score: 48, minWidth: 400, minHeight: 350, maxWidth: 1000),
             AppWeightConfig(appName: "Code", score: 75, minWidth: 700, minHeight: 450, maxWidth: nil),
             AppWeightConfig(appName: "Xcode", score: 78, minWidth: 800, minHeight: 500, maxWidth: nil)
-        ],
-        sideBySideForNotesAndBrowser: true,
-        enableSpaceLearning: true,
-        ignoredApps: [
+        ]
+        self.ignoredApps = ignoredApps ?? [
             "Vorssaint",
             "System Settings",
             "Systemeinstellungen",
@@ -90,7 +110,40 @@ struct Config: Codable {
             "Activity Monitor",
             "Aktivitätsanzeige"
         ]
-    )
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case shortcut, masterShortcut, lockShortcut, guiShortcut
+        case gap, margin, singleWindowMode
+        case animationMode, animationDuration, animationSteps, freezeContentDuringResize
+        case appWeights, sideBySideForNotesAndBrowser, enableSpaceLearning, ignoredApps
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let def = Config.default
+
+        shortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .shortcut) ?? def.shortcut
+        masterShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .masterShortcut) ?? def.masterShortcut
+        lockShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .lockShortcut) ?? def.lockShortcut
+        guiShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .guiShortcut) ?? def.guiShortcut
+
+        gap = try container.decodeIfPresent(Double.self, forKey: .gap) ?? def.gap
+        margin = try container.decodeIfPresent(Double.self, forKey: .margin) ?? def.margin
+        singleWindowMode = try container.decodeIfPresent(String.self, forKey: .singleWindowMode) ?? def.singleWindowMode
+
+        animationMode = try container.decodeIfPresent(String.self, forKey: .animationMode) ?? "smooth"
+        animationDuration = try container.decodeIfPresent(Double.self, forKey: .animationDuration) ?? 0.18
+        animationSteps = try container.decodeIfPresent(Int.self, forKey: .animationSteps) ?? 10
+        freezeContentDuringResize = try container.decodeIfPresent(Bool.self, forKey: .freezeContentDuringResize) ?? true
+
+        appWeights = try container.decodeIfPresent([AppWeightConfig].self, forKey: .appWeights) ?? def.appWeights
+        sideBySideForNotesAndBrowser = try container.decodeIfPresent(Bool.self, forKey: .sideBySideForNotesAndBrowser) ?? def.sideBySideForNotesAndBrowser
+        enableSpaceLearning = try container.decodeIfPresent(Bool.self, forKey: .enableSpaceLearning) ?? def.enableSpaceLearning
+        ignoredApps = try container.decodeIfPresent([String].self, forKey: .ignoredApps) ?? def.ignoredApps
+    }
+
+    static let `default` = Config()
 
     static var configURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser

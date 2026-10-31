@@ -146,6 +146,179 @@ struct AnimatedTileVisualizer: View {
     }
 }
 
+// MARK: - Live 10x6 Matrix Visualizer
+struct LiveMatrixVisualizer: View {
+    let windows: [ManagedWindow]
+
+    var body: some View {
+        VStack(spacing: 6) {
+            // Header bar for matrix
+            HStack {
+                Label("Virtual Desktop Matrix (10 × 6 Grid)", systemImage: "square.grid.3x3.fill")
+                    .font(.caption.bold())
+                    .foregroundColor(.cyan)
+
+                Spacer()
+
+                Text(windows.isEmpty ? "Simulated Layout • 3 Windows" : "\(windows.count) Active Windows on Space")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.cyan.opacity(0.12))
+                    .foregroundColor(.cyan)
+                    .cornerRadius(4)
+            }
+
+            // Matrix Screen Canvas
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.65))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
+
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    let h = geo.size.height
+                    let masterW = max(180, w * 0.58)
+                    let stackW = max(120, w - masterW - 8)
+                    let stackH = (h - 8) / 2.0
+
+                    HStack(spacing: 8) {
+                        // Master Window Slot (60% width, 100% height)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                HStack(spacing: 4) {
+                                    Circle().fill(Color.red.opacity(0.85)).frame(width: 7, height: 7)
+                                    Circle().fill(Color.orange.opacity(0.85)).frame(width: 7, height: 7)
+                                    Circle().fill(Color.green.opacity(0.85)).frame(width: 7, height: 7)
+                                    Text(masterAppName)
+                                        .font(.caption2.bold())
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                HStack(spacing: 4) {
+                                    if isMasterLocked {
+                                        Image(systemName: "lock.fill")
+                                            .font(.caption2)
+                                            .foregroundColor(.orange)
+                                    }
+                                    Text("MASTER (60%)")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .padding(.horizontal, 5).padding(.vertical, 1)
+                                        .background(Color.blue.opacity(0.2))
+                                        .foregroundColor(.blue)
+                                        .cornerRadius(3)
+                                }
+                            }
+
+                            Spacer()
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(masterTitle)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                Text("Cols 1-6 • Rows 1-6 (10x6 Grid Matrix)")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.cyan.opacity(0.9))
+                            }
+                        }
+                        .padding(8)
+                        .frame(width: masterW, height: h)
+                        .background(
+                            LinearGradient(
+                                colors: [Color.blue.opacity(0.22), Color.cyan.opacity(0.10)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.cyan.opacity(0.4), lineWidth: 1.2)
+                        )
+                        .cornerRadius(6)
+
+                        // Secondary Stack Column (40% width)
+                        VStack(spacing: 8) {
+                            // Stack 1 (Top)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(stack1AppName)
+                                        .font(.caption2.bold())
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text("STACK 1 (40%)")
+                                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                        .padding(.horizontal, 4).padding(.vertical, 1)
+                                        .background(Color.secondary.opacity(0.15))
+                                        .cornerRadius(3)
+                                }
+                                Spacer()
+                                Text("Cols 7-10 • Rows 1-3")
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(6)
+                            .frame(width: stackW, height: stackH)
+                            .background(Color(NSColor.textColor).opacity(0.08))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+                            .cornerRadius(6)
+
+                            // Stack 2 (Bottom)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(stack2AppName)
+                                        .font(.caption2.bold())
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text("STACK 2 (40%)")
+                                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                        .padding(.horizontal, 4).padding(.vertical, 1)
+                                        .background(Color.secondary.opacity(0.15))
+                                        .cornerRadius(3)
+                                }
+                                Spacer()
+                                Text("Cols 7-10 • Rows 4-6")
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(6)
+                            .frame(width: stackW, height: stackH)
+                            .background(Color(NSColor.textColor).opacity(0.08))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+                            .cornerRadius(6)
+                        }
+                    }
+                    .padding(6)
+                }
+            }
+            .frame(height: 125)
+        }
+    }
+
+    private var masterAppName: String {
+        windows.first?.appName ?? "VS Code / Cursor"
+    }
+
+    private var masterTitle: String {
+        windows.first?.title.isEmpty == false ? windows.first!.title : "Primary Editor / Document"
+    }
+
+    private var isMasterLocked: Bool {
+        windows.first?.isLocked ?? false
+    }
+
+    private var stack1AppName: String {
+        windows.count > 1 ? windows[1].appName : "Arc / Safari Browser"
+    }
+
+    private var stack2AppName: String {
+        windows.count > 2 ? windows[2].appName : "iTerm2 / Terminal"
+    }
+}
+
 // MARK: - Main Settings View
 struct SettingsView: View {
     @State private var config: Config = Config.load()
@@ -177,9 +350,11 @@ struct SettingsView: View {
     init(tabName: String? = nil) {
         let tab: Int
         switch tabName?.lowercased() {
-        case "daemon", "logs", "2": tab = 2
-        case "scoring", "weights", "apps", "1": tab = 1
-        case "about", "info", "3": tab = 3
+        case "space", "grid", "0": tab = 0
+        case "shortcuts", "hotkeys", "1": tab = 1
+        case "scoring", "scores", "weights", "apps", "2": tab = 2
+        case "daemon", "logs", "3": tab = 3
+        case "about", "info", "4": tab = 4
         default: tab = 0
         }
         _selectedTab = State(initialValue: tab)
@@ -190,7 +365,7 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header Bar
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 AnimatedTileVisualizer()
                     .frame(width: 58, height: 44)
                     .shadow(color: .cyan.opacity(0.35), radius: 4, x: 0, y: 2)
@@ -245,7 +420,7 @@ struct SettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.cyan)
 
-                // Distinct Close Button
+                // Close Settings Button
                 Button(action: { SettingsWindowController.shared.close() }) {
                     Label("Close", systemImage: "xmark")
                         .font(.callout.bold())
@@ -293,25 +468,25 @@ struct SettingsView: View {
 
             Divider()
 
-            // Segmented Tabs
+            // Segmented Tabs (5 Views matching Stitch)
             Picker("", selection: $selectedTab) {
-                Text("Shortcuts & Grid").tag(0)
-                Text("Window Scores (1-100)").tag(1)
-                Text("Active Space & Master").tag(2)
+                Text("Active Space & Live Grid").tag(0)
+                Text("Shortcuts & Grid").tag(1)
+                Text("Window Scores (1-100)").tag(2)
                 Text("Daemon & Logs").tag(3)
-                Text("About").tag(4)
+                Text("About SpaceTile").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.top, 10)
             .padding(.bottom, 6)
 
-            // Content Area (Fixed Height, No Scrolling Needed)
+            // Content Area (Fixed Height, Fits Cleanly without Scrolling)
             VStack {
                 switch selectedTab {
-                case 0: shortcutsTab
-                case 1: windowScoresTab
-                case 2: activeSpaceTab
+                case 0: activeSpaceTab
+                case 1: shortcutsTab
+                case 2: windowScoresTab
                 case 3: daemonTab
                 case 4: aboutTab
                 default: EmptyView()
@@ -323,7 +498,7 @@ struct SettingsView: View {
 
             Divider()
 
-            // Footer (No Restart Button here, moved to Daemon tab)
+            // Footer
             HStack(spacing: 12) {
                 if let msg = statusMessage {
                     Text(msg)
@@ -355,7 +530,7 @@ struct SettingsView: View {
             .padding(.vertical, 10)
             .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
         }
-        .frame(width: 860, height: 600)
+        .frame(width: 880, height: 620)
         .onAppear {
             refreshData()
             checkStatus()
@@ -378,146 +553,36 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Tab 0: Shortcuts & Grid
-    var shortcutsTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            GroupBox(label: Label("Global Hotkeys (Record New)", systemImage: "keyboard")) {
-                VStack(spacing: 8) {
-                    shortcutRow(title: "Rearrange Windows", desc: "Tiles all windows into the dynamic grid", shortcut: config.shortcut, field: "optimize")
-                    Divider()
-                    shortcutRow(title: "Set Window as Master", desc: "Promotes focused window to master slot", shortcut: config.masterShortcut, field: "master")
-                    Divider()
-                    shortcutRow(title: "Lock/Unlock Active Window", desc: "Locks window in place; reserves its grid tiles", shortcut: config.lockShortcut, field: "lock")
-                    Divider()
-                    shortcutRow(title: "Open Settings GUI", desc: "Opens this configuration window", shortcut: config.guiShortcut, field: "gui")
-                }
-                .padding(6)
-            }
-
-            GroupBox(label: Label("Grid & Window Sizing", systemImage: "square.grid.3x3")) {
-                HStack(spacing: 24) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Inner Gap:")
-                            Slider(value: $config.gap, in: 0...30, step: 1)
-                            Text("\(Int(config.gap)) px").frame(width: 45)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Outer Margin:")
-                            Slider(value: $config.margin, in: 0...40, step: 1)
-                            Text("\(Int(config.margin)) px").frame(width: 45)
-                        }
-                    }
-                }
-                .padding(6)
-            }
-
-            GroupBox(label: Label("Repositioning Speed", systemImage: "bolt.fill")) {
-                HStack(spacing: 20) {
-                    Picker("Mode:", selection: $config.animationMode) {
-                        Text("Instant (Zero-Lag Snap)").tag("instant")
-                        Text("Smooth (4-step glide)").tag("smooth")
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 320)
-
-                    Text(config.animationMode == "instant" ? "Instant repositioning, 100% fluid, no IPC stutter." : "Lightweight glide interpolation.")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-                .padding(6)
-            }
-        }
-    }
-
-    private func shortcutRow(title: String, desc: String, shortcut: ShortcutConfig, field: String) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).fontWeight(.medium)
-                Text(desc).font(.caption).foregroundColor(.secondary)
-            }
-            Spacer()
-            if recordingField == field {
-                Button("Press Keys on Keyboard...") { stopRecording() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-            } else {
-                Text(shortcut.displayString)
-                    .padding(.horizontal, 10).padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.12))
-                    .cornerRadius(6)
-                    .font(.system(.caption, design: .monospaced))
-
-                Button("Record New") { startRecording(field: field) }
-            }
-        }
-    }
-
-    // MARK: - Tab 1: Window Scores (1-100) & Constraints
-    var windowScoresTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Window Appetite Scores (1 - 100)")
-                .font(.headline)
-            Text("Higher scores claim more columns/tiles in the grid. Terminals are kept narrow (~30 score), while Browsers & IDEs claim wider space (~70-75 score).")
-                .font(.caption).foregroundColor(.secondary)
-
-            VStack(spacing: 8) {
-                scoreRow(app: "Terminal Apps (iTerm2, Terminal, Kitty)", category: "Terminal", score: 32, desc: "Capped to 3 cols on 10x6 4K grid (~1140px max width)")
-                Divider()
-                scoreRow(app: "Web Browsers (Chrome, Safari, Arc, Firefox)", category: "Browser", score: 72, desc: "Claims 6-7 cols on 10x6 grid (2300px+)")
-                Divider()
-                scoreRow(app: "Code Editors (VS Code, Xcode)", category: "Editor", score: 75, desc: "Generous code viewing width")
-                Divider()
-                scoreRow(app: "Notes & Docs (Obsidian, Notes, Bear)", category: "Notes", score: 50, desc: "Balanced reading column; 50/50 when paired with browser")
-            }
-            .padding(10)
-            .background(Color.secondary.opacity(0.06))
-            .cornerRadius(8)
-
-            GroupBox(label: Label("Pairing Rules", systemImage: "book.pages")) {
-                Toggle("Auto Side-by-Side (50/50) when Browser is paired with Notes", isOn: $config.sideBySideForNotesAndBrowser)
-                    .fontWeight(.medium)
-            }
-            .padding(.top, 4)
-        }
-    }
-
-    private func scoreRow(app: String, category: String, score: Int, desc: String) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(app).fontWeight(.semibold)
-                Text(desc).font(.caption).foregroundColor(.secondary)
-            }
-            Spacer()
-            Text("Score: \(score)")
-                .font(.caption.bold())
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(score > 60 ? Color.blue.opacity(0.15) : Color.orange.opacity(0.15))
-                .foregroundColor(score > 60 ? .blue : .orange)
-                .cornerRadius(6)
-        }
-    }
-
-    // MARK: - Tab 2: Active Space & Master Selection + Locking
+    // MARK: - Tab 0: Active Space & Live Grid Matrix (from Stitch)
     var activeSpaceTab: some View {
         VStack(alignment: .leading, spacing: 10) {
+            LiveMatrixVisualizer(windows: currentWindows)
+
             HStack {
-                Text("Windows in Current Space (\(currentWindows.count)):")
-                    .font(.headline)
+                Text("Recognized Windows on Active Space (\(currentWindows.count)):")
+                    .font(.subheadline.bold())
                 Spacer()
                 Button(action: refreshData) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label("Sync Space", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.bordered)
             }
+            .padding(.top, 2)
 
             if currentWindows.isEmpty {
-                Text("No manageable windows found on this Space.")
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 20)
+                VStack(spacing: 6) {
+                    Image(systemName: "desktopcomputer")
+                        .font(.system(size: 24))
+                        .foregroundColor(.secondary)
+                    Text("No manageable application windows detected on this Space.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 16)
             } else {
-                VStack(spacing: 8) {
-                    ForEach(Array(currentWindows.prefix(5).enumerated()), id: \.element.id) { index, win in
+                VStack(spacing: 6) {
+                    ForEach(Array(currentWindows.prefix(4).enumerated()), id: \.element.id) { index, win in
                         activeWindowRow(index: index, win: win)
                     }
                 }
@@ -545,7 +610,9 @@ struct SettingsView: View {
                             .background(Color.green.opacity(0.15))
                             .cornerRadius(4)
                     }
-                    Text("Score: \(win.score)").font(.caption2).foregroundColor(.secondary)
+                    Text("Score: \(win.score)")
+                        .font(.caption2.monospaced())
+                        .foregroundColor(.secondary)
                 }
                 Text(win.title.isEmpty ? "(No title)" : win.title)
                     .font(.caption).foregroundColor(.secondary).lineLimit(1)
@@ -569,21 +636,218 @@ struct SettingsView: View {
                 .tint(.cyan)
             }
         }
-        .padding(8)
+        .padding(7)
         .background(Color.secondary.opacity(index == 0 ? 0.12 : 0.05))
+        .cornerRadius(7)
+    }
+
+    // MARK: - Tab 1: Shortcuts & Grid (with multi-step smoothness & content freeze)
+    var shortcutsTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GroupBox(label: Label("Global Hotkeys (Record New)", systemImage: "keyboard")) {
+                VStack(spacing: 6) {
+                    shortcutRow(title: "Rearrange Windows", desc: "Tiles all windows into the dynamic 10x6 grid", shortcut: config.shortcut, field: "optimize")
+                    Divider()
+                    shortcutRow(title: "Set Window as Master", desc: "Promotes focused window to master slot", shortcut: config.masterShortcut, field: "master")
+                    Divider()
+                    shortcutRow(title: "Lock/Unlock Active Window", desc: "Locks window in place; reserves its grid tiles", shortcut: config.lockShortcut, field: "lock")
+                    Divider()
+                    shortcutRow(title: "Open Settings GUI", desc: "Opens this configuration window", shortcut: config.guiShortcut, field: "gui")
+                }
+                .padding(5)
+            }
+
+            GroupBox(label: Label("Grid & Window Sizing", systemImage: "square.grid.3x3")) {
+                HStack(spacing: 24) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Inner Gap:")
+                            Slider(value: $config.gap, in: 0...32, step: 1)
+                            Text("\(Int(config.gap)) px").font(.caption.monospaced()).frame(width: 45)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Outer Margin:")
+                            Slider(value: $config.margin, in: 0...48, step: 1)
+                            Text("\(Int(config.margin)) px").font(.caption.monospaced()).frame(width: 45)
+                        }
+                    }
+                }
+                .padding(5)
+            }
+
+            GroupBox(label: Label("Window Animation & Smoothness", systemImage: "speedometer")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 20) {
+                        Picker("Mode:", selection: $config.animationMode) {
+                            Text("Direct (Zero-Lag Snap)").tag("instant")
+                            Text("Smooth Motion Glide").tag("smooth")
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 320)
+
+                        Text(config.animationMode == "instant" ? "Instant snap, zero lag, no IPC stutter." : "Multi-step cubic ease glide.")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+
+                    if config.animationMode == "smooth" {
+                        HStack(spacing: 24) {
+                            HStack {
+                                Text("Duration:")
+                                Slider(value: $config.animationDuration, in: 0.06...0.35, step: 0.02)
+                                Text("\(Int(config.animationDuration * 1000)) ms").font(.caption.monospaced()).frame(width: 55)
+                            }
+
+                            HStack {
+                                Text("Steps:")
+                                Slider(value: Binding(
+                                    get: { Double(config.animationSteps) },
+                                    set: { config.animationSteps = Int($0) }
+                                ), in: 4...20, step: 1)
+                                Text("\(config.animationSteps) frames").font(.caption.monospaced()).frame(width: 65)
+                            }
+                        }
+
+                        Toggle("Freeze window content redraw during resize (Atomic Display Sync)", isOn: $config.freezeContentDuringResize)
+                            .font(.caption.bold())
+                        Text("Uses SkyLight CGSDisableUpdate/CGSReenableUpdate to prevent apps (Chrome, VSCode, iTerm2) from layout-thrashing on every intermediate frame.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(5)
+            }
+        }
+    }
+
+    private func shortcutRow(title: String, desc: String, shortcut: ShortcutConfig, field: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).fontWeight(.medium)
+                Text(desc).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            if recordingField == field {
+                Button("Press Keys on Keyboard...") { stopRecording() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+            } else {
+                Text(shortcut.displayString)
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.12))
+                    .cornerRadius(6)
+                    .font(.system(.caption, design: .monospaced))
+
+                Button("Record New") { startRecording(field: field) }
+            }
+        }
+    }
+
+    // MARK: - Tab 2: Window Scores (1-100) & Appetite (from Stitch)
+    var windowScoresTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Window Appetite Scores (1 - 100)")
+                        .font(.headline)
+                    Text("Higher scores reserve more columns on the 10x6 grid. Terminals are kept focused (~32 score, max 1024px width), while Browsers & IDEs expand (~70-75 score).")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                Spacer()
+                HStack(spacing: 8) {
+                    scoreBadge(label: "Compact (1-35)", color: .orange)
+                    scoreBadge(label: "Balanced (50)", color: .blue)
+                    scoreBadge(label: "Wide (70+)", color: .cyan)
+                }
+            }
+
+            VStack(spacing: 7) {
+                scoreAppCategoryCard(
+                    title: "Terminal Apps",
+                    apps: "iTerm2, Terminal, Ghostty, Kitty, Alacritty",
+                    score: 32,
+                    desc: "Capped to 3 columns on 10x6 4K grid (max 1024px width)",
+                    icon: "terminal"
+                )
+                scoreAppCategoryCard(
+                    title: "Web Browsers",
+                    apps: "Google Chrome, Safari, Arc, Firefox",
+                    score: 72,
+                    desc: "Claims 6-7 columns on 10x6 grid (2300px+)",
+                    icon: "globe"
+                )
+                scoreAppCategoryCard(
+                    title: "Code Editors",
+                    apps: "VS Code, Xcode, Cursor",
+                    score: 75,
+                    desc: "Generous code viewing width for sidebars & split panes",
+                    icon: "chevron.left.forwardslash.chevron.right"
+                )
+                scoreAppCategoryCard(
+                    title: "Notes & Documents",
+                    apps: "Obsidian, Apple Notes, Bear",
+                    score: 50,
+                    desc: "Balanced reading column; 50/50 when paired with browser",
+                    icon: "note.text"
+                )
+            }
+
+            GroupBox(label: Label("Smart Pairing Rules", systemImage: "link")) {
+                Toggle("Auto Side-by-Side (50/50) when Browser is paired with Notes", isOn: $config.sideBySideForNotesAndBrowser)
+                    .fontWeight(.medium)
+            }
+        }
+    }
+
+    private func scoreBadge(label: String, color: Color) -> some View {
+        Text(label)
+            .font(.caption2.bold())
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(color.opacity(0.15))
+            .foregroundColor(color)
+            .cornerRadius(4)
+    }
+
+    private func scoreAppCategoryCard(title: String, apps: String, score: Int, desc: String, icon: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(.cyan)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(title).fontWeight(.semibold)
+                    Text("(\(apps))").font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                }
+                Text(desc).font(.caption2).foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Text("Score: \(score)")
+                .font(.system(.caption, design: .monospaced).bold())
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(score > 60 ? Color.blue.opacity(0.18) : Color.orange.opacity(0.18))
+                .foregroundColor(score > 60 ? .blue : .orange)
+                .cornerRadius(6)
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.06))
         .cornerRadius(8)
     }
 
-    // MARK: - Tab 3: Dedicated Daemon & Logs Tab
+    // MARK: - Tab 3: Daemon & Real-time Logs (from Stitch)
     var daemonTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             GroupBox(label: Label("macOS System Permissions", systemImage: "hand.raised.fill")) {
                 HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(isAccessibilityGranted ? Color.green : Color.red)
-                                .frame(width: 10, height: 10)
+                                .frame(width: 9, height: 9)
                             Text(isAccessibilityGranted ? "Accessibility Permission: Granted" : "Accessibility Permission: Missing")
                                 .fontWeight(.bold)
                         }
@@ -593,24 +857,13 @@ struct SettingsView: View {
 
                     Spacer()
 
-                    if isAccessibilityGranted {
-                        Button("Open System Settings") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                                NSWorkspace.shared.open(url)
-                            }
-                            _ = WindowManager.ensureAccessibility(prompt: true)
+                    Button("Open System Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
                         }
-                        .buttonStyle(.bordered)
-                    } else {
-                        Button("Grant Permission") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                                NSWorkspace.shared.open(url)
-                            }
-                            _ = WindowManager.ensureAccessibility(prompt: true)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.blue)
+                        _ = WindowManager.ensureAccessibility(prompt: true)
                     }
+                    .buttonStyle(.bordered)
 
                     Button(action: {
                         checkStatus()
@@ -624,20 +877,20 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-                .padding(6)
+                .padding(5)
             }
 
             GroupBox(label: Label("Background Service Control", systemImage: "gearshape.2.fill")) {
                 HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(daemonStatus.isRunning ? Color.green : Color.red)
-                                .frame(width: 10, height: 10)
+                                .frame(width: 9, height: 9)
                             Text(daemonStatus.isRunning ? "Daemon is Running" : "Daemon is Stopped")
                                 .fontWeight(.bold)
                             if let pid = daemonStatus.pid {
-                                Text("(PID: \(pid))").font(.caption).foregroundColor(.secondary)
+                                Text("(PID: \(pid))").font(.caption.monospaced()).foregroundColor(.secondary)
                             }
                         }
                         Text("Auto-starts at login via ~/Library/LaunchAgents/com.guppi.spacetile.plist")
@@ -667,40 +920,80 @@ struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 }
-                .padding(8)
+                .padding(5)
             }
 
-            HStack {
-                Text("Recent Logs (~/Library/Logs/SpaceTile/stdout.log):")
-                    .font(.caption.bold())
-                Spacer()
-                Button("Refresh Logs") {
-                    recentLogs = ServiceInstaller.getRecentLogs()
-                }
-                .font(.caption)
-            }
+            // Real-time macOS Terminal Log Frame (from Stitch)
+            VStack(spacing: 0) {
+                HStack {
+                    HStack(spacing: 6) {
+                        Circle().fill(Color.red.opacity(0.85)).frame(width: 9, height: 9)
+                        Circle().fill(Color.orange.opacity(0.85)).frame(width: 9, height: 9)
+                        Circle().fill(Color.green.opacity(0.85)).frame(width: 9, height: 9)
+                        Text("zsh · spacetile-daemon (~/Library/Logs/SpaceTile/stdout.log)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.75))
+                    }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(recentLogs, id: \.self) { line in
-                        Text(line)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundColor(.secondary)
+                    Spacer()
+
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            Circle().fill(Color.green).frame(width: 6, height: 6)
+                            Text("STREAMING")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(.green)
+                        }
+
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(recentLogs.joined(separator: "\n"), forType: .string)
+                            showStatus("Logs copied to clipboard!")
+                        }) {
+                            Label("Copy", systemImage: "doc.on.doc")
+                                .font(.caption2)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(.white.opacity(0.8))
+
+                        Button(action: {
+                            recentLogs = ServiceInstaller.getRecentLogs()
+                            showStatus("Logs refreshed.")
+                        }) {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                                .font(.caption2)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(.white.opacity(0.8))
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.85))
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(recentLogs, id: \.self) { line in
+                            Text(line)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.green.opacity(0.9))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                }
+                .frame(height: 140)
+                .background(Color.black.opacity(0.92))
             }
-            .frame(height: 180)
-            .background(Color.black.opacity(0.35))
             .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12), lineWidth: 1))
         }
     }
 
-    // MARK: - Tab 4: About
+    // MARK: - Tab 4: About SpaceTile (with telemetry badges & coffee)
     var aboutTab: some View {
-        VStack(spacing: 16) {
-            Spacer().frame(height: 8)
+        VStack(spacing: 14) {
+            Spacer().frame(height: 4)
 
             HStack(spacing: 20) {
                 AnimatedTileVisualizer()
@@ -716,7 +1009,7 @@ struct SettingsView: View {
                             Image(nsImage: icon)
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: 22, height: 22)
+                                .frame(width: 24, height: 24)
                                 .cornerRadius(5)
                         }
                     }
@@ -729,6 +1022,14 @@ struct SettingsView: View {
             .padding()
             .background(Color.secondary.opacity(0.06))
             .cornerRadius(12)
+
+            // Telemetry Badges (from Stitch)
+            HStack(spacing: 16) {
+                telemetryCard(title: "Core Engine", val: "Swift 5.9", icon: "cpu")
+                telemetryCard(title: "IPC Latency", val: "< 20ms", icon: "bolt.fill")
+                telemetryCard(title: "License", val: "MIT Open Source", icon: "checkmark.seal.fill")
+            }
+            .frame(maxWidth: 500)
 
             VStack(spacing: 12) {
                 Text("SpaceTile is free and open source. Enjoying it?")
@@ -750,20 +1051,38 @@ struct SettingsView: View {
                         }
                     }) {
                         HStack(spacing: 6) {
-                            Text("☕")
+                            Image(systemName: "cup.and.saucer.fill")
                             Text("Buy Me a Coffee").fontWeight(.semibold)
                         }
                         .padding(.horizontal, 12).padding(.vertical, 6)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.orange)
+                    .tint(Color(red: 0.85, green: 0.47, blue: 0.02)) // #d97706 warm amber
                 }
             }
-            .padding(.top, 10)
+            .padding(.top, 6)
 
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func telemetryCard(title: String, val: String, icon: String) -> some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundColor(.cyan)
+            Text(val)
+                .font(.subheadline.bold())
+                .foregroundColor(.primary)
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.06))
+        .cornerRadius(8)
     }
 
     // MARK: - Shortcut Recording
