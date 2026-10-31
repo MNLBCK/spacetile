@@ -26,12 +26,46 @@ class WindowManager {
     private(set) var lockedWindowIDs: Set<CGWindowID> = []
     private var lastRunTime: Date?
 
+    static var lockedStoreURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".config/spacetile/locked_windows.json")
+    }
+
+    init() {
+        reloadLockedWindowIDs()
+    }
+
+    func reloadLockedWindowIDs() {
+        guard let data = try? Data(contentsOf: WindowManager.lockedStoreURL),
+              let list = try? JSONDecoder().decode([UInt32].self, from: data) else {
+            return
+        }
+        self.lockedWindowIDs = Set(list.map { CGWindowID($0) })
+    }
+
+    func persistLockedWindowIDs() {
+        let list = Array(lockedWindowIDs).map { UInt32($0) }
+        let url = WindowManager.lockedStoreURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(list) {
+            try? data.write(to: url, options: .atomic)
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.locksChanged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+    }
+
     func setWindowLocked(id: CGWindowID, locked: Bool) {
+        reloadLockedWindowIDs()
         if locked {
             lockedWindowIDs.insert(id)
         } else {
             lockedWindowIDs.remove(id)
         }
+        persistLockedWindowIDs()
     }
 
     static func isAccessibilityGranted(prompt: Bool = false) -> Bool {
@@ -72,6 +106,7 @@ class WindowManager {
     }
 
     func toggleLockForFocusedWindow() -> (locked: Bool, appName: String)? {
+        reloadLockedWindowIDs()
         guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
         let appRef = AXUIElementCreateApplication(front.processIdentifier)
         var winRef: CFTypeRef?
@@ -84,10 +119,12 @@ class WindowManager {
         let appName = front.localizedName ?? "App"
         if lockedWindowIDs.contains(winID) {
             lockedWindowIDs.remove(winID)
+            persistLockedWindowIDs()
             print("[\u{001B}[33mSpaceTile\u{001B}[0m] Unlocked window for '\(appName)' (ID: \(winID))")
             return (false, appName)
         } else {
             lockedWindowIDs.insert(winID)
+            persistLockedWindowIDs()
             print("[\u{001B}[32mSpaceTile\u{001B}[0m] Locked window for '\(appName)' (ID: \(winID)) at current position.")
             return (true, appName)
         }
@@ -113,6 +150,7 @@ class WindowManager {
             return false
         }
 
+        reloadLockedWindowIDs()
         let config = Config.load()
 
         guard let targetScreen = findTargetScreen() else {
@@ -146,13 +184,27 @@ class WindowManager {
             windows.insert(chosen, at: 0)
         }
 
-        // Calculate layout with Grid & Scoring Engine
+        // Apply learned ratio from SpaceMemory if not forced
+        var effectiveRatio = forcedRatio
+        if effectiveRatio == nil && config.enableSpaceLearning {
+            let appNames = Array(Set(windows.map { $0.appName })).sorted()
+            let resKey = "\(Int(targetScreen.frame.width))x\(Int(targetScreen.frame.height))"
+            if let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
+               let learned = profile.learnedMasterRatio {
+                effectiveRatio = learned
+                if verbose {
+                    print("[\u{001B}[32mSpaceMemory\u{001B}[0m] Applied learned ratio: \(Int(learned * 100))% for [\(appNames.joined(separator: ", "))]")
+                }
+            }
+        }
+
+        // Calculate layout with Grid & Scoring Engine (with strict tile reservation for locked windows)
         let frames = calculateGridScoringLayout(
             windows: windows,
             workArea: workArea,
             screen: targetScreen,
             config: config,
-            forcedRatio: forcedRatio
+            forcedRatio: effectiveRatio
         )
 
         // Apply frames
@@ -203,6 +255,200 @@ class WindowManager {
         let count = windows.count
         guard count > 0 else { return [] }
 
+        var resultFrames = windows.map { $0.currentFrame }
+        let lockedIndices = windows.indices.filter { windows[$0].isLocked }
+        let unlockedIndices = windows.indices.filter { !windows[$0].isLocked }
+
+        // If all windows are locked, keep current frames
+        if unlockedIndices.isEmpty {
+            return resultFrames
+        }
+
+        // Case A: NO windows are locked -> Standard unconstrained layout across entire workArea
+        if lockedIndices.isEmpty {
+            return calculateUnconstrainedLayout(
+                windows: windows,
+                workArea: workArea,
+                screen: screen,
+                config: config,
+                forcedRatio: forcedRatio
+            )
+        }
+
+        // Case B: ONE OR MORE windows are locked -> Reserve their grid tiles!
+        let gap = config.gap
+        let is4K = screen.frame.width >= 2560
+        let totalCols: Int = is4K ? 12 : 6
+        let totalRows: Int = is4K ? 6 : 4
+
+        let colWidth = (workArea.width - CGFloat(totalCols - 1) * gap) / CGFloat(totalCols)
+        let rowHeight = (workArea.height - CGFloat(totalRows - 1) * gap) / CGFloat(totalRows)
+
+        func rectFor(col: Int, row: Int, colSpan: Int, rowSpan: Int) -> CGRect {
+            let x = workArea.origin.x + CGFloat(col) * (colWidth + gap)
+            let y = workArea.origin.y + CGFloat(row) * (rowHeight + gap)
+            let w = CGFloat(colSpan) * colWidth + CGFloat(colSpan - 1) * gap
+            let h = CGFloat(rowSpan) * rowHeight + CGFloat(rowSpan - 1) * gap
+            return CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h))
+        }
+
+        // Initialize 2D grid
+        var isFree = Array(repeating: Array(repeating: true, count: totalRows), count: totalCols)
+
+        // Lock tiles under locked windows
+        for lIdx in lockedIndices {
+            let curFrame = windows[lIdx].currentFrame
+            resultFrames[lIdx] = curFrame
+
+            for c in 0..<totalCols {
+                for r in 0..<totalRows {
+                    let cell = rectFor(col: c, row: r, colSpan: 1, rowSpan: 1)
+                    let overlap = cell.intersection(curFrame)
+                    if !overlap.isNull && overlap.width > cell.width * 0.20 && overlap.height > cell.height * 0.20 {
+                        isFree[c][r] = false
+                    }
+                }
+            }
+        }
+
+        // Find bounding box of free cells
+        var minFreeCol = totalCols
+        var maxFreeCol = -1
+        var minFreeRow = totalRows
+        var maxFreeRow = -1
+        var freeCount = 0
+
+        for c in 0..<totalCols {
+            for r in 0..<totalRows {
+                if isFree[c][r] {
+                    freeCount += 1
+                    minFreeCol = min(minFreeCol, c)
+                    maxFreeCol = max(maxFreeCol, c)
+                    minFreeRow = min(minFreeRow, r)
+                    maxFreeRow = max(maxFreeRow, r)
+                }
+            }
+        }
+
+        if freeCount == 0 {
+            return resultFrames
+        }
+
+        // Check if the free space forms a solid rectangular sub-workArea
+        var isSolidSubRect = true
+        for c in minFreeCol...maxFreeCol {
+            for r in minFreeRow...maxFreeRow {
+                if !isFree[c][r] {
+                    isSolidSubRect = false
+                    break
+                }
+            }
+            if !isSolidSubRect { break }
+        }
+
+        if isSolidSubRect {
+            let subCols = maxFreeCol - minFreeCol + 1
+            let subRows = maxFreeRow - minFreeRow + 1
+            let subWorkArea = rectFor(col: minFreeCol, row: minFreeRow, colSpan: subCols, rowSpan: subRows)
+
+            let subWindows = unlockedIndices.map { windows[$0] }
+            let subFrames = calculateUnconstrainedLayout(
+                windows: subWindows,
+                workArea: subWorkArea,
+                screen: screen,
+                config: config,
+                forcedRatio: forcedRatio
+            )
+
+            for (i, uIdx) in unlockedIndices.enumerated() {
+                resultFrames[uIdx] = subFrames[i]
+            }
+            return resultFrames
+        }
+
+        // Free cells form non-rectangular or fragmented areas (e.g. L-shape) -> Allocate maximal free rectangles
+        struct FreeRect {
+            let col: Int
+            let row: Int
+            let colSpan: Int
+            let rowSpan: Int
+            var area: Int { colSpan * rowSpan }
+        }
+
+        func findLargestFreeRect() -> FreeRect? {
+            var best: FreeRect? = nil
+            for c in 0..<totalCols {
+                for r in 0..<totalRows {
+                    if isFree[c][r] {
+                        var maxW = 0
+                        while c + maxW < totalCols && isFree[c + maxW][r] {
+                            maxW += 1
+                        }
+                        for w in 1...maxW {
+                            var maxH = 0
+                            while r + maxH < totalRows {
+                                var rowOk = true
+                                for dc in 0..<w {
+                                    if !isFree[c + dc][r + maxH] {
+                                        rowOk = false
+                                        break
+                                    }
+                                }
+                                if !rowOk { break }
+                                maxH += 1
+                            }
+                            if maxH > 0 {
+                                let candidate = FreeRect(col: c, row: r, colSpan: w, rowSpan: maxH)
+                                if best == nil || candidate.area > best!.area {
+                                    best = candidate
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return best
+        }
+
+        for (i, uIdx) in unlockedIndices.enumerated() {
+            guard let best = findLargestFreeRect() else { break }
+            let remainingCount = unlockedIndices.count - (i + 1)
+
+            var spanC = best.colSpan
+            var spanR = best.rowSpan
+
+            if remainingCount > 0 {
+                if best.colSpan >= 4 && best.colSpan >= best.rowSpan {
+                    spanC = max(2, best.colSpan * 6 / 10)
+                } else if best.rowSpan >= 4 {
+                    spanR = max(2, best.rowSpan / 2)
+                }
+            }
+
+            for dc in 0..<spanC {
+                for dr in 0..<spanR {
+                    if best.col + dc < totalCols && best.row + dr < totalRows {
+                        isFree[best.col + dc][best.row + dr] = false
+                    }
+                }
+            }
+
+            resultFrames[uIdx] = rectFor(col: best.col, row: best.row, colSpan: spanC, rowSpan: spanR)
+        }
+
+        return resultFrames
+    }
+
+    private func calculateUnconstrainedLayout(
+        windows: [ManagedWindow],
+        workArea: CGRect,
+        screen: NSScreen,
+        config: Config,
+        forcedRatio: Double?
+    ) -> [CGRect] {
+        let count = windows.count
+        guard count > 0 else { return [] }
+
         let gap = config.gap
         let is4K = screen.frame.width >= 2560
 
@@ -222,34 +468,26 @@ class WindowManager {
             return CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h))
         }
 
-        // If any window is locked, preserve its current frame
         var resultFrames = windows.map { $0.currentFrame }
 
-        // Find available bounding space excluding locked windows
-        let unlockedIndices = windows.indices.filter { !windows[$0].isLocked }
-        if unlockedIndices.isEmpty { return resultFrames }
-
-        // Single Unlocked Window
-        if unlockedIndices.count == 1 {
-            let idx = unlockedIndices[0]
+        // Single Window
+        if count == 1 {
             if config.singleWindowMode == "maximized" {
-                resultFrames[idx] = workArea
+                resultFrames[0] = workArea
             } else {
                 let w = floor(workArea.width * 0.72)
                 let h = floor(workArea.height * 0.94)
                 let x = floor(workArea.origin.x + (workArea.width - w) / 2)
                 let y = floor(workArea.origin.y + (workArea.height - h) / 2)
-                resultFrames[idx] = CGRect(x: x, y: y, width: w, height: h)
+                resultFrames[0] = CGRect(x: x, y: y, width: w, height: h)
             }
             return resultFrames
         }
 
-        // 2 Unlocked Windows
-        if unlockedIndices.count == 2 {
-            let i0 = unlockedIndices[0]
-            let i1 = unlockedIndices[1]
-            let w0 = windows[i0]
-            let w1 = windows[i1]
+        // 2 Windows
+        if count == 2 {
+            let w0 = windows[0]
+            let w1 = windows[1]
 
             // Determine column split based on score or forced ratio
             let masterCols: Int
@@ -273,18 +511,14 @@ class WindowManager {
             }
 
             let stackCols = totalCols - masterCols
-            resultFrames[i0] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
-            resultFrames[i1] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: totalRows)
+            resultFrames[0] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
+            resultFrames[1] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: totalRows)
             return resultFrames
         }
 
-        // 3 Unlocked Windows
-        if unlockedIndices.count == 3 {
-            let mIdx = unlockedIndices[0]
-            let s0 = unlockedIndices[1]
-            let s1 = unlockedIndices[2]
-
-            let masterWin = windows[mIdx]
+        // 3 Windows
+        if count == 3 {
+            let masterWin = windows[0]
             let masterCols: Int
             if let fr = forcedRatio {
                 masterCols = max(2, min(totalCols - 2, Int(round(Double(totalCols) * fr))))
@@ -297,17 +531,14 @@ class WindowManager {
             let stackCols = totalCols - masterCols
             let r0 = totalRows / 2
             let r1 = totalRows - r0
-            resultFrames[mIdx] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
-            resultFrames[s0] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: r0)
-            resultFrames[s1] = rectFor(col: masterCols, row: r0, colSpan: stackCols, rowSpan: r1)
+            resultFrames[0] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
+            resultFrames[1] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: r0)
+            resultFrames[2] = rectFor(col: masterCols, row: r0, colSpan: stackCols, rowSpan: r1)
             return resultFrames
         }
 
-        // 4+ Unlocked Windows: Use the 3x3 Signature Layout
-        let masterIdx = unlockedIndices[0]
-        let remaining = Array(unlockedIndices.dropFirst())
-        let masterWin = windows[masterIdx]
-
+        // 4+ Windows: Use the 3x3 Signature Layout
+        let masterWin = windows[0]
         let isTermMaster = masterWin.score <= 35 ||
                            masterWin.appName.lowercased().contains("term") ||
                            masterWin.appName.lowercased().contains("kitty") ||
@@ -327,43 +558,43 @@ class WindowManager {
             let col2X = rightX + remColW + gap
 
             // Master Terminal: Col 0, 2 rows high (~1024px x 1334px)
-            resultFrames[masterIdx] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(termW), height: floor(2 * cellH3 + gap))
+            resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(termW), height: floor(2 * cellH3 + gap))
 
-            if unlockedIndices.count == 4 {
+            if count == 4 {
                 // Main secondary window gets top-right wide viewport (remW x 2/3 height)
-                resultFrames[remaining[0]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
+                resultFrames[1] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
                 // Bottom left under terminal
-                resultFrames[remaining[1]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+                resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
                 // Bottom right under main secondary
-                resultFrames[remaining[2]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remW), height: floor(cellH3))
+                resultFrames[3] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remW), height: floor(cellH3))
                 return resultFrames
             }
 
-            if unlockedIndices.count == 5 {
+            if count == 5 {
                 // Secondary 0: wide top area (remW x 2/3 height)
-                resultFrames[remaining[0]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
+                resultFrames[1] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
                 // Bottom left under terminal
-                resultFrames[remaining[1]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+                resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
                 // Bottom two side-by-side
-                resultFrames[remaining[2]] = CGRect(x: floor(col1X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
-                resultFrames[remaining[3]] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
+                resultFrames[3] = CGRect(x: floor(col1X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
+                resultFrames[4] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
                 return resultFrames
             }
 
-            if unlockedIndices.count == 6 {
+            if count == 6 {
                 // 1 Terminal Master (1024px, 2/3 height) + 1 Bottom-Left under terminal (1024px, 1/3 height)
                 // Right side: 4 windows in clean 2x2 grid (each remColW ~1380px x cellH3 ~662px)
-                resultFrames[remaining[0]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
-                resultFrames[remaining[1]] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(remColW), height: floor(cellH3))
-                resultFrames[remaining[2]] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(remColW), height: floor(cellH3))
-                resultFrames[remaining[3]] = CGRect(x: floor(col1X), y: floor(workArea.origin.y + cellH3 + gap), width: floor(remColW), height: floor(cellH3))
-                resultFrames[remaining[4]] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + cellH3 + gap), width: floor(remColW), height: floor(cellH3))
+                resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+                resultFrames[2] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(remColW), height: floor(cellH3))
+                resultFrames[3] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(remColW), height: floor(cellH3))
+                resultFrames[4] = CGRect(x: floor(col1X), y: floor(workArea.origin.y + cellH3 + gap), width: floor(remColW), height: floor(cellH3))
+                resultFrames[5] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + cellH3 + gap), width: floor(remColW), height: floor(cellH3))
                 return resultFrames
             }
 
             // 7+ Windows: Terminal Master (~1024px) + right area tiled evenly
-            resultFrames[remaining[0]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
-            let remList = Array(remaining.dropFirst())
+            resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+            let remList = Array(windows.indices.dropFirst(2))
             let rightRows = max(1, (remList.count + 1) / 2)
             let rightH = (workArea.height - CGFloat(rightRows - 1) * gap) / CGFloat(rightRows)
             for (idx, rIdx) in remList.enumerated() {
@@ -384,67 +615,68 @@ class WindowManager {
             return CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h))
         }
 
-        if unlockedIndices.count == 4 {
+        if count == 4 {
             // Master (2/3 width, 2/3 height)
-            resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+            resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
             // Bottom (under master: 2/3 width, 1/3 height)
-            resultFrames[remaining[0]] = rect3x3(c: 0, r: 2, cSpan: 2, rSpan: 1)
+            resultFrames[1] = rect3x3(c: 0, r: 2, cSpan: 2, rSpan: 1)
             // Right stack (2 windows: 1/3 width, 1/2 height each)
             let halfH = (workArea.height - gap) / 2.0
             let rightX = workArea.origin.x + 2 * (cellW3 + gap)
-            resultFrames[remaining[1]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
-            resultFrames[remaining[2]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
+            resultFrames[2] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
+            resultFrames[3] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
             return resultFrames
         }
 
-        if unlockedIndices.count == 5 {
+        if count == 5 {
             // Master (2/3 width, 2/3 height)
-            resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+            resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
             // Bottom 2 windows (under master: each 1/3 width, 1/3 height)
-            resultFrames[remaining[0]] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
-            resultFrames[remaining[1]] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
+            resultFrames[1] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
+            resultFrames[2] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
             // Right stack (2 windows: 1/3 width, 1/2 height each)
             let halfH = (workArea.height - gap) / 2.0
             let rightX = workArea.origin.x + 2 * (cellW3 + gap)
-            resultFrames[remaining[2]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
-            resultFrames[remaining[3]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
+            resultFrames[3] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
+            resultFrames[4] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
             return resultFrames
         }
 
-        if unlockedIndices.count == 6 {
+        if count == 6 {
             // THE EXACT 6-WINDOW SIGNATURE 3x3 LAYOUT:
             // Master (Top-Left: 2/3 width, 2/3 height)
-            resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+            resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
             // Right 1 (Top-Right: 1/3 width, 1/3 height)
-            resultFrames[remaining[0]] = rect3x3(c: 2, r: 0, cSpan: 1, rSpan: 1)
+            resultFrames[1] = rect3x3(c: 2, r: 0, cSpan: 1, rSpan: 1)
             // Right 2 (Mid-Right: 1/3 width, 1/3 height)
-            resultFrames[remaining[1]] = rect3x3(c: 2, r: 1, cSpan: 1, rSpan: 1)
+            resultFrames[2] = rect3x3(c: 2, r: 1, cSpan: 1, rSpan: 1)
             // Right 3 (Bottom-Right: 1/3 width, 1/3 height)
-            resultFrames[remaining[2]] = rect3x3(c: 2, r: 2, cSpan: 1, rSpan: 1)
+            resultFrames[3] = rect3x3(c: 2, r: 2, cSpan: 1, rSpan: 1)
             // Bottom 1 (Bottom-Left: 1/3 width, 1/3 height)
-            resultFrames[remaining[3]] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
+            resultFrames[4] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
             // Bottom 2 (Bottom-Mid: 1/3 width, 1/3 height)
-            resultFrames[remaining[4]] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
+            resultFrames[5] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
             return resultFrames
         }
 
         // For 7+ windows: Master gets top-left 2/3, remaining split into right stack and bottom row
-        resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
-        let rightCount = (remaining.count + 1) / 2
-        let bottomCount = remaining.count - rightCount
+        resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+        let remIndices = Array(windows.indices.dropFirst())
+        let rightCount = (remIndices.count + 1) / 2
+        let bottomCount = remIndices.count - rightCount
 
         let rightH = (workArea.height - CGFloat(rightCount - 1) * gap) / CGFloat(rightCount)
         let rightX = workArea.origin.x + 2 * (cellW3 + gap)
         for i in 0..<rightCount {
             let ry = workArea.origin.y + CGFloat(i) * (rightH + gap)
-            resultFrames[remaining[i]] = CGRect(x: floor(rightX), y: floor(ry), width: floor(cellW3), height: floor(rightH))
+            resultFrames[remIndices[i]] = CGRect(x: floor(rightX), y: floor(ry), width: floor(cellW3), height: floor(rightH))
         }
 
         let bottomW = (2 * cellW3 + gap - CGFloat(bottomCount - 1) * gap) / CGFloat(bottomCount)
         let bottomY = workArea.origin.y + 2 * (cellH3 + gap)
         for i in 0..<bottomCount {
             let bx = workArea.origin.x + CGFloat(i) * (bottomW + gap)
-            resultFrames[remaining[rightCount + i]] = CGRect(x: floor(bx), y: floor(bottomY), width: floor(bottomW), height: floor(cellH3))
+            resultFrames[remIndices[rightCount + i]] = CGRect(x: floor(bx), y: floor(bottomY), width: floor(bottomW), height: floor(cellH3))
         }
 
         return resultFrames
@@ -572,9 +804,19 @@ class WindowManager {
     }
 
     func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>, config: Config) -> [ManagedWindow] {
+        reloadLockedWindowIDs()
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let cgWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
+        }
+
+        // Clean up stale locked window IDs from closed windows
+        let allWins = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        let allIDs = Set(allWins.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
+        let deadIDs = lockedWindowIDs.subtracting(allIDs)
+        if !deadIDs.isEmpty {
+            lockedWindowIDs.subtract(deadIDs)
+            persistLockedWindowIDs()
         }
 
         var onScreenMap: [CGWindowID: (order: Int, owner: String, title: String, bounds: CGRect)] = [:]

@@ -581,6 +581,11 @@ struct SettingsView: View {
                 refreshData()
             }
         }
+        .onReceive(DistributedNotificationCenter.default().publisher(for: NSNotification.Name("com.guppi.spacetile.locksChanged"))) { _ in
+            DispatchQueue.main.async {
+                refreshData()
+            }
+        }
         .onDisappear {
             stopRecording()
         }
