@@ -50,6 +50,10 @@ struct Config: Codable {
     // Space Learning
     var enableSpaceLearning: Bool
 
+    // Window Animations
+    var enableAnimations: Bool
+    var animationDuration: Double
+
     static let `default` = Config(
         shortcut: ShortcutConfig(
             modifiers: ["hyper"],
@@ -95,7 +99,9 @@ struct Config: Codable {
             AppConstraint(appName: "Code", category: "editor", maxWidth: nil, minWidth: 700.0, maxRatio4K: nil, preferSideBySide: false, presetWidth: nil),
             AppConstraint(appName: "Xcode", category: "editor", maxWidth: nil, minWidth: 800.0, maxRatio4K: nil, preferSideBySide: false, presetWidth: nil)
         ],
-        enableSpaceLearning: true
+        enableSpaceLearning: true,
+        enableAnimations: true,
+        animationDuration: 0.25
     )
 
     static var configURL: URL {
@@ -115,14 +121,15 @@ struct Config: Codable {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             var loaded = try decoder.decode(Config.self, from: data)
-            // Ensure newly added fields exist or migrate
             if loaded.appConstraints.isEmpty {
                 loaded.appConstraints = Config.default.appConstraints
             }
             return loaded
         } catch {
-            print("[\u{001B}[33mWARN\u{001B}[0m] Fehler beim Laden von \(url.path): \(error). Verwende Standardkonfiguration.")
-            return Config.default
+            print("[\u{001B}[33mWARN\u{001B}[0m] Aktualisiere Konfiguration auf neue Version...")
+            let def = Config.default
+            def.save()
+            return def
         }
     }
 

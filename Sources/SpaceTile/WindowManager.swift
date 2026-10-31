@@ -20,9 +20,18 @@ class WindowManager {
     private var lastRunTime: Date?
     private var cycleIndex: Int = 0
 
+    static func ensureAccessibility(prompt: Bool = true) -> Bool {
+        let trusted = AXIsProcessTrusted()
+        if !trusted && prompt {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
+        return trusted
+    }
+
     @discardableResult
-    func optimize(verbose: Bool = true) -> Bool {
-        guard AXIsProcessTrusted() else {
+    func optimize(verbose: Bool = true, forcedMasterID: CGWindowID? = nil, forcedRatio: Double? = nil) -> Bool {
+        guard WindowManager.ensureAccessibility(prompt: true) else {
             print("[\u{001B}[31mFEHLER\u{001B}[0m] Bedienungshilfen-Berechtigung (Accessibility) nicht erteilt!")
             print("Bitte in macOS: Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen aktivieren.")
             return false
@@ -51,42 +60,52 @@ class WindowManager {
         guard workArea.width > 200 && workArea.height > 200 else { return false }
 
         // 2. Find visible windows on current Space
-        let windows = collectWindowsOnCurrentSpace(screenBounds: axVisibleRect, ignoredApps: Set(config.ignoredApps))
+        var windows = collectWindowsOnCurrentSpace(screenBounds: axVisibleRect, ignoredApps: Set(config.ignoredApps))
         if windows.isEmpty {
             if verbose { print("[\u{001B}[33mINFO\u{001B}[0m] Keine relevanten Fenster im aktuellen Space gefunden.") }
             return true
         }
 
+        // Support forced master selection (e.g. from GUI)
+        if let fid = forcedMasterID, let idx = windows.firstIndex(where: { $0.id == fid }) {
+            let chosen = windows.remove(at: idx)
+            windows.insert(chosen, at: 0)
+        }
+
         let appNames = Array(Set(windows.map { $0.appName })).sorted()
         let resKey = "\(Int(targetScreen.frame.width))x\(Int(targetScreen.frame.height))"
 
-        // 3. Ratio determination (Cycle vs. Memory vs. Semantic Heuristic)
+        // 3. Ratio determination
         let now = Date()
-        var effectiveRatio: Double = config.masterRatio
+        var effectiveRatio: Double = forcedRatio ?? config.masterRatio
         var layoutReason: String = "Standard Master-Stack (\(Int(effectiveRatio * 100))%)"
 
-        let isRapidCycle = (lastRunTime != nil && now.timeIntervalSince(lastRunTime!) < 2.2 && !config.cycleRatios.isEmpty)
-        if isRapidCycle {
-            cycleIndex = (cycleIndex + 1) % config.cycleRatios.count
-            effectiveRatio = config.cycleRatios[cycleIndex]
-            layoutReason = "Zyklus-Umschaltung (\(Int(effectiveRatio * 100))%)"
+        if let fr = forcedRatio {
+            layoutReason = "Benutzer-Vorgabe (\(Int(fr * 100))%)"
         } else {
-            cycleIndex = 0
+            let isRapidCycle = (lastRunTime != nil && now.timeIntervalSince(lastRunTime!) < 2.2 && !config.cycleRatios.isEmpty)
+            if isRapidCycle {
+                cycleIndex = (cycleIndex + 1) % config.cycleRatios.count
+                effectiveRatio = config.cycleRatios[cycleIndex]
+                layoutReason = "Zyklus-Umschaltung (\(Int(effectiveRatio * 100))%)"
+            } else {
+                cycleIndex = 0
 
-            // Check learned space memory
-            if config.enableSpaceLearning,
-               let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
-               let learned = profile.learnedMasterRatio, profile.observationsCount >= 2 {
-                effectiveRatio = learned
-                layoutReason = "🧠 Gelerntes Space-Gedächtnis (\(Int(learned * 100))%)"
-            }
-            // Check semantic Side-by-Side (Notes + Browser)
-            else if config.sideBySideForNotesAndBrowser && windows.count == 2 {
-                let categories = windows.map { getAppCategory(appName: $0.appName, config: config) }
-                if (categories.contains("browser") && categories.contains("notes")) ||
-                   (categories.contains("notes") && categories.contains("custom")) {
-                    effectiveRatio = 0.50
-                    layoutReason = "📖 Side-by-Side (50/50 Lese- & Notizmodus)"
+                // Check learned space memory
+                if config.enableSpaceLearning,
+                   let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
+                   let learned = profile.learnedMasterRatio, profile.observationsCount >= 2 {
+                    effectiveRatio = learned
+                    layoutReason = "🧠 Gelerntes Space-Gedächtnis (\(Int(learned * 100))%)"
+                }
+                // Check semantic Side-by-Side (Notes + Browser)
+                else if config.sideBySideForNotesAndBrowser && windows.count == 2 {
+                    let categories = windows.map { getAppCategory(appName: $0.appName, config: config) }
+                    if (categories.contains("browser") && categories.contains("notes")) ||
+                       (categories.contains("notes") && categories.contains("custom")) {
+                        effectiveRatio = 0.50
+                        layoutReason = "📖 Side-by-Side (50/50 Lese- & Notizmodus)"
+                    }
                 }
             }
         }
@@ -103,16 +122,28 @@ class WindowManager {
             screen: targetScreen,
             config: config,
             ratio: effectiveRatio,
-            isRapidCycle: isRapidCycle
+            isRapidCycle: forcedRatio != nil || (now.timeIntervalSince(lastRunTime ?? now) < 2.2)
         )
 
-        // 5. Apply positions & sizes
-        for (index, win) in windows.enumerated() {
-            let targetFrame = frames[index]
-            setWindowFrame(win.element, target: targetFrame)
+        // 5. Apply positions & sizes (animated or immediate)
+        if config.enableAnimations && config.animationDuration > 0.05 {
+            var moves: [(element: AXUIElement, start: CGRect, target: CGRect)] = []
+            for (index, win) in windows.enumerated() {
+                let target = frames[index]
+                let start = getWindowFrame(win.element) ?? target
+                moves.append((element: win.element, start: start, target: target))
+            }
+            animateWindows(moves: moves, duration: config.animationDuration)
+        } else {
+            for (index, win) in windows.enumerated() {
+                setWindowFrameImmediate(win.element, target: frames[index])
+            }
+        }
 
-            if verbose {
-                let tag = win.isFocused ? "\u{001B}[32m★ Master\u{001B}[0m" : "\u{001B}[37m  Stack \u{001B}[0m"
+        if verbose {
+            for (index, win) in windows.enumerated() {
+                let targetFrame = frames[index]
+                let tag = (index == 0) ? "\u{001B}[32m★ Master\u{001B}[0m" : "\u{001B}[37m  Stack \u{001B}[0m"
                 let titleShort = win.title.isEmpty ? "(ohne Titel)" : String(win.title.prefix(32))
                 let category = getAppCategory(appName: win.appName, config: config)
                 print(String(format: " %@[%@ (%@)] \"%@\" -> %dx%d @ (%d, %d)",
@@ -248,22 +279,18 @@ class WindowManager {
             var focusedWinRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWinRef) == .success,
                let focusedWin = focusedWinRef {
-                var posRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(focusedWin as! AXUIElement, kAXPositionAttribute as CFString, &posRef) == .success,
-                   let val = posRef {
-                    var point = CGPoint.zero
-                    if AXValueGetValue(val as! AXValue, .cgPoint, &point) {
-                        for screen in NSScreen.screens {
-                            let primaryH = NSScreen.screens.first?.frame.height ?? 0
-                            let screenAxRect = CGRect(
-                                x: screen.frame.origin.x,
-                                y: primaryH - (screen.frame.origin.y + screen.frame.height),
-                                width: screen.frame.width,
-                                height: screen.frame.height
-                            )
-                            if screenAxRect.contains(point) {
-                                return screen
-                            }
+                if let frame = getWindowFrame(focusedWin as! AXUIElement) {
+                    let point = CGPoint(x: frame.midX, y: frame.midY)
+                    for screen in NSScreen.screens {
+                        let primaryH = NSScreen.screens.first?.frame.height ?? 0
+                        let screenAxRect = CGRect(
+                            x: screen.frame.origin.x,
+                            y: primaryH - (screen.frame.origin.y + screen.frame.height),
+                            width: screen.frame.width,
+                            height: screen.frame.height
+                        )
+                        if screenAxRect.contains(point) {
+                            return screen
                         }
                     }
                 }
@@ -297,6 +324,7 @@ class WindowManager {
             let y = bounds["Y"] as? Double ?? 0
             let rect = CGRect(x: x, y: y, width: w, height: h)
 
+            // Strictly check layer 0 and intersects screenBounds
             if layer == 0 && w >= 150 && h >= 150 && rect.intersects(screenBounds) {
                 onScreenMap[id] = order
             }
@@ -366,18 +394,60 @@ class WindowManager {
         return managed
     }
 
-    private func setWindowFrame(_ element: AXUIElement, target: CGRect) {
+    private func getWindowFrame(_ element: AXUIElement) -> CGRect? {
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let p = posRef, let s = sizeRef else {
+            return nil
+        }
+        var pt = CGPoint.zero
+        var sz = CGSize.zero
+        guard AXValueGetValue(p as! AXValue, .cgPoint, &pt),
+              AXValueGetValue(s as! AXValue, .cgSize, &sz) else {
+            return nil
+        }
+        return CGRect(origin: pt, size: sz)
+    }
+
+    private func animateWindows(moves: [(element: AXUIElement, start: CGRect, target: CGRect)], duration: Double) {
+        let steps = max(8, Int(duration * 60.0))
+        let interval = duration / Double(steps)
+
+        for step in 1...steps {
+            let progress = Double(step) / Double(steps)
+            // Cubic ease-out
+            let ease = 1.0 - pow(1.0 - progress, 3.0)
+
+            for move in moves {
+                let curX = move.start.origin.x + (move.target.origin.x - move.start.origin.x) * ease
+                let curY = move.start.origin.y + (move.target.origin.y - move.start.origin.y) * ease
+                let curW = move.start.size.width + (move.target.size.width - move.start.size.width) * ease
+                let curH = move.start.size.height + (move.target.size.height - move.start.size.height) * ease
+                setWindowFrameImmediate(move.element, target: CGRect(x: curX, y: curY, width: curW, height: curH))
+            }
+            if step < steps {
+                usleep(useconds_t(interval * 1_000_000.0))
+            }
+        }
+
+        // Final settle
+        for move in moves {
+            setWindowFrameImmediate(move.element, target: move.target)
+        }
+    }
+
+    private func setWindowFrameImmediate(_ element: AXUIElement, target: CGRect) {
         var pos = target.origin
         var size = target.size
 
         if let valPos = AXValueCreate(.cgPoint, &pos) {
             AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
         }
-
         if let valSize = AXValueCreate(.cgSize, &size) {
             AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, valSize)
         }
-
         if let valPos = AXValueCreate(.cgPoint, &pos) {
             AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
         }
