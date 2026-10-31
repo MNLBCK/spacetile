@@ -6,7 +6,7 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
 
     private var window: NSWindow?
 
-    func show() {
+    func show(initialTab: String? = nil) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
 
@@ -19,7 +19,7 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
                 return
             }
 
-            let contentView = SettingsView()
+            let contentView = SettingsView(tabName: initialTab)
             let hostingController = NSHostingController(rootView: contentView)
 
             let win = NSWindow(
@@ -47,8 +47,11 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        window = nil
         if CommandLine.arguments.contains("daemon") {
             NSApp.setActivationPolicy(.accessory)
+        } else {
+            NSApp.terminate(nil)
         }
     }
 }

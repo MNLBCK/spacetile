@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 
 struct ServiceInstaller {
     static let label = "com.guppi.spacetile"
@@ -134,6 +135,25 @@ struct ServiceInstaller {
         if process.terminationStatus != 0 {
             // Fallback to reload if not already loaded
             start()
+        }
+    }
+
+    static func restartAndReopenSettings(targetTab: String = "daemon") {
+        let bin = binaryDestination.path
+        let script = "nohup /bin/sh -c 'sleep 0.8 && \"\(bin)\" gui \(targetTab)' >/dev/null 2>&1 &"
+        let escaped = script.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let osaProcess = Process()
+        osaProcess.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        osaProcess.arguments = ["-e", "do shell script \"\(escaped)\""]
+        try? osaProcess.run()
+        osaProcess.waitUntilExit()
+
+        restart()
+
+        if !CommandLine.arguments.contains("daemon") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                NSApp.terminate(nil)
+            }
         }
     }
 

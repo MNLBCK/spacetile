@@ -41,9 +41,10 @@ case "lock":
     _ = WindowManager.shared.toggleLockForFocusedWindow()
 
 case "gui", "settings":
+    let targetTab = args.count > 1 ? args[1] : nil
     let app = NSApplication.shared
     app.setActivationPolicy(.regular)
-    SettingsWindowController.shared.show()
+    SettingsWindowController.shared.show(initialTab: targetTab)
     app.run()
 
 case "learn":

@@ -151,12 +151,23 @@ struct SettingsView: View {
     @State private var config: Config = Config.load()
     @State private var statusMessage: String?
     @State private var currentWindows: [ManagedWindow] = []
-    @State private var selectedTab: Int = 0
+    @State private var selectedTab: Int
     @State private var recordingField: String? = nil
     @State private var isAccessibilityGranted: Bool = AXIsProcessTrusted()
     @State private var daemonStatus: (isRunning: Bool, pid: Int?) = ServiceInstaller.statusInfo()
     @State private var recentLogs: [String] = ServiceInstaller.getRecentLogs()
     @State private var localEventMonitor: Any? = nil
+
+    init(tabName: String? = nil) {
+        let tab: Int
+        switch tabName?.lowercased() {
+        case "daemon", "logs", "2": tab = 2
+        case "scoring", "weights", "apps", "1": tab = 1
+        case "about", "info", "3": tab = 3
+        default: tab = 0
+        }
+        _selectedTab = State(initialValue: tab)
+    }
 
     let pollTimer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
@@ -234,8 +245,8 @@ struct SettingsView: View {
                         _ = WindowManager.ensureAccessibility(prompt: true)
                     }
                     Button("Restart Daemon") {
-                        ServiceInstaller.restart()
-                        checkStatus()
+                        showStatus("Restarting daemon...")
+                        ServiceInstaller.restartAndReopenSettings(targetTab: "daemon")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
@@ -541,9 +552,8 @@ struct SettingsView: View {
                     Spacer()
 
                     Button("Restart Daemon") {
-                        ServiceInstaller.restart()
-                        checkStatus()
-                        showStatus("Daemon restarted via launchctl kickstart.")
+                        showStatus("Restarting daemon...")
+                        ServiceInstaller.restartAndReopenSettings(targetTab: "daemon")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.cyan)
