@@ -435,27 +435,20 @@ struct SettingsView: View {
 
                 Spacer()
 
-                // Prominent Rearrange Now Button
+                // Prominent Rearrange Now Button (Taller, distinct primary action)
                 Button(action: triggerOptimizeNow) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 7) {
                         Image(systemName: "sparkles")
+                            .font(.system(size: 13, weight: .bold))
                         Text("Rearrange Now")
-                            .fontWeight(.bold)
+                            .font(.system(size: 13, weight: .bold))
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
+                    .frame(height: 34)
+                    .padding(.horizontal, 16)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .tint(.cyan)
-
-                // Close Settings Button
-                Button(action: { SettingsWindowController.shared.close() }) {
-                    Label("Close", systemImage: "xmark")
-                        .font(.callout.bold())
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.bordered)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
@@ -734,11 +727,16 @@ struct SettingsView: View {
 
             GroupBox(label: Label("Window Animation & Smoothness", systemImage: "speedometer")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 20) {
-                        Picker("Mode:", selection: $config.animationMode) {
+                    HStack(spacing: 12) {
+                        Text("Mode:")
+                            .font(.subheadline.bold())
+                            .fixedSize()
+
+                        Picker("", selection: $config.animationMode) {
                             Text("Direct (Zero-Lag Snap)").tag("instant")
                             Text("Smooth Motion Glide").tag("smooth")
                         }
+                        .labelsHidden()
                         .pickerStyle(.segmented)
                         .frame(width: 320)
 

@@ -22,13 +22,27 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             let contentView = SettingsView(tabName: initialTab)
             let hostingController = NSHostingController(rootView: contentView)
 
+            let winWidth: CGFloat = 880
+            let winHeight: CGFloat = 620
+
             let win = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 840, height: 590),
+                contentRect: NSRect(x: 0, y: 0, width: winWidth, height: winHeight),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
-            win.center()
+
+            // Center strictly in the geometric middle of the visible work area
+            // (avoiding top macOS system alerts and menu bar dialogs)
+            if let screen = NSScreen.main ?? NSScreen.screens.first {
+                let vf = screen.visibleFrame
+                let x = vf.origin.x + (vf.width - winWidth) / 2.0
+                let y = vf.origin.y + (vf.height - winHeight) / 2.0
+                win.setFrameOrigin(NSPoint(x: round(x), y: round(y)))
+            } else {
+                win.center()
+            }
+
             win.title = "SpaceTile Settings"
             win.contentViewController = hostingController
             win.isReleasedWhenClosed = false
