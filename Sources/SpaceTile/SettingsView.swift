@@ -191,16 +191,9 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             // Header Bar
             HStack(spacing: 16) {
-                if let icon = SettingsView.loadAppIcon() {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 46, height: 46)
-                        .cornerRadius(10)
-                        .shadow(color: .cyan.opacity(0.35), radius: 4, x: 0, y: 2)
-                } else {
-                    AnimatedTileVisualizer()
-                }
+                AnimatedTileVisualizer()
+                    .frame(width: 58, height: 44)
+                    .shadow(color: .cyan.opacity(0.35), radius: 4, x: 0, y: 2)
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -710,22 +703,23 @@ struct SettingsView: View {
             Spacer().frame(height: 8)
 
             HStack(spacing: 20) {
-                if let icon = SettingsView.loadAppIcon() {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 76, height: 76)
-                        .cornerRadius(16)
-                        .shadow(color: .cyan.opacity(0.4), radius: 6, x: 0, y: 3)
-                } else {
-                    AnimatedTileVisualizer()
-                        .scaleEffect(1.2)
-                        .frame(width: 100, height: 75)
-                }
+                AnimatedTileVisualizer()
+                    .scaleEffect(1.2)
+                    .frame(width: 95, height: 72)
+                    .shadow(color: .cyan.opacity(0.35), radius: 6, x: 0, y: 3)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("SpaceTile")
-                        .font(.title.bold())
+                    HStack(spacing: 8) {
+                        Text("SpaceTile")
+                            .font(.title.bold())
+                        if let icon = SettingsView.loadAppIcon() {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 22, height: 22)
+                                .cornerRadius(5)
+                        }
+                    }
                     Text("Version 1.3.0 (macOS Native)")
                         .font(.subheadline).foregroundColor(.secondary)
                     Text("Grid-based ergonomic window allocation for macOS.")

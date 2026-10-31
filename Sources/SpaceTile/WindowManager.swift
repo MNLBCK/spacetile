@@ -293,12 +293,78 @@ class WindowManager {
             return resultFrames
         }
 
-        // 4+ Unlocked Windows: Use the 3x3 Signature Layout (Master top-left 2/3, Right stack 1/3, Bottom stack 1/3)
+        // 4+ Unlocked Windows: Use the 3x3 Signature Layout
         let masterIdx = unlockedIndices[0]
         let remaining = Array(unlockedIndices.dropFirst())
+        let masterWin = windows[masterIdx]
+
+        let isTermMaster = masterWin.score <= 35 ||
+                           masterWin.appName.lowercased().contains("term") ||
+                           masterWin.appName.lowercased().contains("kitty") ||
+                           masterWin.appName.lowercased().contains("ghostty") ||
+                           masterWin.appName.lowercased().contains("alacritty")
 
         let cellW3 = (workArea.width - 2 * gap) / 3.0
         let cellH3 = (workArea.height - 2 * gap) / 3.0
+
+        // If Master is a Terminal on 4K, cap its width to ~1024px (never stretch to 2540px!)
+        if isTermMaster && is4K {
+            let termW: CGFloat = min(cellW3, CGFloat(masterWin.maxWidth ?? 1024))
+            let remW: CGFloat = workArea.width - termW - gap
+            let remColW: CGFloat = (remW - gap) / 2.0
+            let rightX: CGFloat = workArea.origin.x + termW + gap
+            let col1X = rightX
+            let col2X = rightX + remColW + gap
+
+            // Master Terminal: Col 0, 2 rows high (~1024px x 1334px)
+            resultFrames[masterIdx] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(termW), height: floor(2 * cellH3 + gap))
+
+            if unlockedIndices.count == 4 {
+                // Main secondary window gets top-right wide viewport (remW x 2/3 height)
+                resultFrames[remaining[0]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
+                // Bottom left under terminal
+                resultFrames[remaining[1]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+                // Bottom right under main secondary
+                resultFrames[remaining[2]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remW), height: floor(cellH3))
+                return resultFrames
+            }
+
+            if unlockedIndices.count == 5 {
+                // Secondary 0: wide top area (remW x 2/3 height)
+                resultFrames[remaining[0]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
+                // Bottom left under terminal
+                resultFrames[remaining[1]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+                // Bottom two side-by-side
+                resultFrames[remaining[2]] = CGRect(x: floor(col1X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
+                resultFrames[remaining[3]] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
+                return resultFrames
+            }
+
+            if unlockedIndices.count == 6 {
+                // 1 Terminal Master (1024px, 2/3 height) + 1 Bottom-Left under terminal (1024px, 1/3 height)
+                // Right side: 4 windows in clean 2x2 grid (each remColW ~1380px x cellH3 ~662px)
+                resultFrames[remaining[0]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+                resultFrames[remaining[1]] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(remColW), height: floor(cellH3))
+                resultFrames[remaining[2]] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(remColW), height: floor(cellH3))
+                resultFrames[remaining[3]] = CGRect(x: floor(col1X), y: floor(workArea.origin.y + cellH3 + gap), width: floor(remColW), height: floor(cellH3))
+                resultFrames[remaining[4]] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + cellH3 + gap), width: floor(remColW), height: floor(cellH3))
+                return resultFrames
+            }
+
+            // 7+ Windows: Terminal Master (~1024px) + right area tiled evenly
+            resultFrames[remaining[0]] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
+            let remList = Array(remaining.dropFirst())
+            let rightRows = max(1, (remList.count + 1) / 2)
+            let rightH = (workArea.height - CGFloat(rightRows - 1) * gap) / CGFloat(rightRows)
+            for (idx, rIdx) in remList.enumerated() {
+                let col = idx % 2
+                let row = idx / 2
+                let cx = col == 0 ? col1X : col2X
+                let cy = workArea.origin.y + CGFloat(row) * (rightH + gap)
+                resultFrames[rIdx] = CGRect(x: floor(cx), y: floor(cy), width: floor(remColW), height: floor(rightH))
+            }
+            return resultFrames
+        }
 
         func rect3x3(c: Int, r: Int, cSpan: Int, rSpan: Int) -> CGRect {
             let x = workArea.origin.x + CGFloat(c) * (cellW3 + gap)

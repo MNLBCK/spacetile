@@ -1,2 +1,20 @@
+# Xcode & Swift Package Manager
 .build/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj
+*.xcworkspace
+.swiftpm/
+DerivedData/
+
+# macOS System Files
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+Icon\r
+
+# SpaceTile Local Logs & Configs
+*.log
+.build-artifacts/
