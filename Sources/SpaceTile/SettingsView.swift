@@ -153,7 +153,7 @@ struct SettingsView: View {
     @State private var currentWindows: [ManagedWindow] = []
     @State private var selectedTab: Int
     @State private var recordingField: String? = nil
-    @State private var isAccessibilityGranted: Bool = AXIsProcessTrusted()
+    @State private var isAccessibilityGranted: Bool = WindowManager.isAccessibilityGranted(prompt: false)
     @State private var daemonStatus: (isRunning: Bool, pid: Int?) = ServiceInstaller.statusInfo()
     @State private var recentLogs: [String] = ServiceInstaller.getRecentLogs()
     @State private var localEventMonitor: Any? = nil
@@ -169,7 +169,7 @@ struct SettingsView: View {
         _selectedTab = State(initialValue: tab)
     }
 
-    let pollTimer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
+    let pollTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -182,20 +182,30 @@ struct SettingsView: View {
                         Text("SpaceTile")
                             .font(.title2.bold())
 
-                        if !isAccessibilityGranted {
-                            Text("Permission Required")
+                        // Dynamic Accessibility Status
+                        if isAccessibilityGranted {
+                            Label("Accessibility: Granted", systemImage: "checkmark.circle.fill")
+                                .font(.caption2.bold())
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.green.opacity(0.15))
+                                .cornerRadius(4)
+                        } else {
+                            Label("Accessibility: Required", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption2.bold())
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.red).cornerRadius(4)
-                        } else {
-                            Text(daemonStatus.isRunning ? "Daemon Active" : "Daemon Stopped")
-                                .font(.caption2.bold())
-                                .foregroundColor(daemonStatus.isRunning ? .green : .orange)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background((daemonStatus.isRunning ? Color.green : Color.orange).opacity(0.15))
+                                .background(Color.red)
                                 .cornerRadius(4)
                         }
+
+                        // Dynamic Daemon Status
+                        Label(daemonStatus.isRunning ? "Daemon Active" : "Daemon Stopped", systemImage: daemonStatus.isRunning ? "bolt.fill" : "pause.fill")
+                            .font(.caption2.bold())
+                            .foregroundColor(daemonStatus.isRunning ? .cyan : .orange)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background((daemonStatus.isRunning ? Color.cyan : Color.orange).opacity(0.15))
+                            .cornerRadius(4)
                     }
                     Text("Intelligent On-Demand Window Tiling for macOS")
                         .font(.caption)
@@ -233,10 +243,15 @@ struct SettingsView: View {
             // Accessibility Warning Banner (Dismisses as soon as granted)
             if !isAccessibilityGranted {
                 HStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.yellow)
-                    Text("Accessibility permission granted in macOS? Click 'Restart Daemon' to apply.")
-                        .font(.caption)
+                    Image(systemName: "hand.raised.fill")
+                        .foregroundColor(.red)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Accessibility Permission Missing")
+                            .font(.subheadline.bold())
+                        Text("Enable SpaceTile in macOS System Settings -> Privacy & Security -> Accessibility.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                     Button("Open System Settings") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
@@ -244,12 +259,14 @@ struct SettingsView: View {
                         }
                         _ = WindowManager.ensureAccessibility(prompt: true)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+
                     Button("Restart Daemon") {
                         showStatus("Restarting daemon...")
                         ServiceInstaller.restartAndReopenSettings(targetTab: "daemon")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
+                    .buttonStyle(.bordered)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -327,6 +344,16 @@ struct SettingsView: View {
         }
         .onReceive(pollTimer) { _ in
             checkStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            checkStatus()
+            refreshData()
+        }
+        .onReceive(DistributedNotificationCenter.default().publisher(for: NSNotification.Name("com.apple.accessibility.api"))) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                checkStatus()
+                refreshData()
+            }
         }
         .onDisappear {
             stopRecording()
@@ -531,7 +558,45 @@ struct SettingsView: View {
 
     // MARK: - Tab 3: Dedicated Daemon & Logs Tab
     var daemonTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            GroupBox(label: Label("macOS System Permissions", systemImage: "hand.raised.fill")) {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(isAccessibilityGranted ? Color.green : Color.red)
+                                .frame(width: 10, height: 10)
+                            Text(isAccessibilityGranted ? "Accessibility Permission: Granted" : "Accessibility Permission: Missing")
+                                .fontWeight(.bold)
+                        }
+                        Text(isAccessibilityGranted ? "SpaceTile has full permission to detect window positions and arrange windows." : "Enable SpaceTile in System Settings -> Privacy & Security -> Accessibility.")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    if isAccessibilityGranted {
+                        Button("Open System Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                            _ = WindowManager.ensureAccessibility(prompt: true)
+                        }
+                        .buttonStyle(.bordered)
+                    } else {
+                        Button("Grant Permission") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                            _ = WindowManager.ensureAccessibility(prompt: true)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                    }
+                }
+                .padding(6)
+            }
+
             GroupBox(label: Label("Background Service Control", systemImage: "gearshape.2.fill")) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -712,7 +777,13 @@ struct SettingsView: View {
 
     // MARK: - Helpers
     func checkStatus() {
-        isAccessibilityGranted = AXIsProcessTrusted()
+        let granted = WindowManager.isAccessibilityGranted(prompt: false)
+        if granted != isAccessibilityGranted {
+            isAccessibilityGranted = granted
+            if granted {
+                showStatus("Accessibility permission detected!")
+            }
+        }
         daemonStatus = ServiceInstaller.statusInfo()
         recentLogs = ServiceInstaller.getRecentLogs()
     }

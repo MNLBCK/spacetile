@@ -33,6 +33,13 @@ struct ServiceInstaller {
                 }
                 try fileManager.copyItem(at: currentExecutable, to: binaryDestination)
                 print("[\u{001B}[32mOK\u{001B}[0m] Installed binary to: \(binaryDestination.path)")
+
+                // Ensure binary has a stable identifier for macOS TCC
+                let signProcess = Process()
+                signProcess.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+                signProcess.arguments = ["-s", "-", "--force", "--identifier", "com.guppi.spacetile", binaryDestination.path]
+                try? signProcess.run()
+                signProcess.waitUntilExit()
             }
         } catch {
             print("[\u{001B}[31mERROR\u{001B}[0m] Could not copy binary: \(error)")
@@ -106,6 +113,7 @@ struct ServiceInstaller {
         } else {
             print(" - Service: \u{001B}[33mStopped\u{001B}[0m")
         }
+        print(" - Accessibility: \(AXIsProcessTrusted() ? "Granted" : "Denied")")
     }
 
     static func start() {

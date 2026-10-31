@@ -34,13 +34,13 @@ class WindowManager {
         }
     }
 
+    static func isAccessibilityGranted(prompt: Bool = false) -> Bool {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
     static func ensureAccessibility(prompt: Bool = true) -> Bool {
-        let trusted = AXIsProcessTrusted()
-        if !trusted && prompt {
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
-        }
-        return trusted
+        return isAccessibilityGranted(prompt: prompt)
     }
 
     func toggleLockForFocusedWindow() -> (locked: Bool, appName: String)? {
