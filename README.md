@@ -1,18 +1,25 @@
 # SpaceTile 🚀
 
-Intelligenter On-Demand Fenster-Optimierer für macOS. 
+Intelligenter On-Demand Fenster-Optimierer für macOS mit Kontext-Erkennung, KI-Space-Gedächtnis und nativer Einstellungs-GUI.
 
-Ersetzt starre Tiling-Manager wie Amethyst durch ein **intelligentes, manuell ausgelöstes Layout**: Du arbeitest ganz normal und drückst bei Bedarf **einen einzigen Shortcut** – alle Fenster deines aktuellen macOS-Spaces ordnen sich sofort optimal an.
+![SpaceTile App Icon](assets/AppIcon.png)
 
 ---
 
 ## Highlights
 
-* 🎯 **Fokus-basiertes Layout (Master-Stack):** Das aktive Fenster wird automatisch zum Hauptfenster (Master, z. B. 62% Breite links). Alle anderen Fenster teilen sich die rechte Seite gleichmäßig.
-* ⚡ **1-Shortcut-Bedienung:** Kein Dutzend verschiedener Tastaturkombinationen. Ein einziger Shortcut erledigt alles.
-* 🔄 **Schnellwechsel (Cycle Ratios):** Drückst du den Shortcut innerhalb von 2 Sekunden nochmals, wechselt das Verhältnis flüssig durch: **62% Master ➔ 50/50 Split ➔ 75% Fokus**.
-* 🧼 **Saubere Filterung:** Ignoriert automatisch System-Popups, Paletten, Vorssaint-Overlays und konfigurierbare Apps (z. B. Einstellungen, Rechner).
-* ⚙️ **Hintergrund-Daemon & CLI:** Läuft entweder dauerhaft als unscheinbarer LaunchAgent im Hintergrund oder kann direkt per CLI (`spacetile optimize`), Raycast oder Vorssaint-Aktion aufgerufen werden.
+* ⚡ **Hyper-Key Steuerung:**
+  * **`Hyper + Leertaste`** (`⌃⌥⇧⌘ + Space`): Optimiert den aktuellen Space sofort nach Kontext.
+  * **`Hyper + S`** (`⌃⌥⇧⌘ + S`): Öffnet die native SwiftUI-Einstellungs-GUI.
+* 🛡️ **Intelligente App-Gewichte & Limits (Smart Weights):**
+  * **Terminal-Schutz auf 4K/Ultra-Wide:** Verhindert, dass ein Terminal auf 3840px unbrauchbare 2380px (62%) breit gezogen wird. Begrenzt Terminals automatisch auf z. B. max. 1150px (oder 34%), während Browser/IDE den Rest bekommen.
+  * **Side-by-Side (50/50 Lese-Modus):** Öffnest du Browser + Notizen (Obsidian, Notes, Bear), schaltet SpaceTile automatisch auf eine 50/50-Teilung.
+  * **Schnellwechsel (Cycle Ratios):** Zweimaliges schnelles Drücken wechselt zwischen 62% Fokus, 50/50 Split und 75% Fokus.
+* 🧠 **Space-Gedächtnis & Beobachtungsmodus (KI/Heuristik):**
+  * Beobachtet im Hintergrund dezent deine bevorzugten Fenstergrößen pro Space und merkt sich, wie du bestimmte App-Paare (z. B. Chrome + iTerm2) am liebsten anordnest.
+  * Mit `spacetile learn` oder über die GUI kannst du ein aktuelles Fensterlayout für den Space auch sofort dauerhaft einprägen.
+* 🖥️ **Native SwiftUI GUI:**
+  * Bequeme Konfiguration von Tastenkürzeln, Rändern, Terminal-Breiten und Anzeige der gelernten Space-Profile.
 
 ---
 
@@ -20,52 +27,17 @@ Ersetzt starre Tiling-Manager wie Amethyst durch ein **intelligentes, manuell au
 
 | Befehl | Beschreibung |
 |---|---|
-| `spacetile` / `spacetile optimize` | Optimiert den aktuellen Space sofort einmalig |
-| `spacetile daemon` | Startet den Daemon im Vordergrund (zum Testen/Debuggen) |
-| `spacetile install` | Richtet den dauerhaften Hintergrund-Dienst ein (LaunchAgent) |
-| `spacetile uninstall` | Entfernt den Hintergrund-Dienst |
-| `spacetile status` | Prüft, ob der Hintergrund-Dienst aktiv ist |
-| `spacetile config` | Zeigt Pfad und Inhalt der JSON-Konfiguration |
-
----
-
-## Standard-Shortcut
-
-```text
-⌃ + ⌥ + ⌘ + Leertaste  (Control + Option + Command + Space)
-```
+| `spacetile` / `spacetile optimize` | Optimiert den aktuellen Space sofort |
+| `spacetile gui` | Öffnet das Einstellungsfenster |
+| `spacetile learn` | Prägt das aktuelle Fensterlayout für das App-Set im Space-Gedächtnis ein |
+| `spacetile daemon` | Startet den Daemon im Vordergrund |
+| `spacetile install` | Installiert/Aktualisiert den Hintergrunddienst (LaunchAgent) |
+| `spacetile uninstall` | Entfernt den Hintergrunddienst |
+| `spacetile status` | Prüft, ob der Hintergrunddienst aktiv ist |
+| `spacetile config` | Gibt die aktuelle JSON-Konfiguration aus |
 
 ---
 
 ## Konfiguration
 
-Die Einstellungen liegen unter:
-`~/.config/spacetile/config.json`
-
-Beispiel:
-```json
-{
-  "shortcut": {
-    "modifiers": ["command", "option", "control"],
-    "key": "space"
-  },
-  "masterRatio": 0.62,
-  "cycleRatios": [0.62, 0.50, 0.75],
-  "gap": 10,
-  "margin": 12,
-  "singleWindowMode": "centered",
-  "ignoredApps": [
-    "Vorssaint",
-    "System Settings",
-    "Systemeinstellungen",
-    "Calculator",
-    "Rechner",
-    "1Password"
-  ]
-}
-```
-
-Nach dem Bearbeiten der Konfigurationsdatei einfach kurz den Dienst neu laden:
-```bash
-spacetile install
-```
+Liegt unter `~/.config/spacetile/config.json`. Kann direkt in der Datei oder über die GUI (**`Hyper + S`**) bearbeitet werden.

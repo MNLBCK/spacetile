@@ -1,4 +1,4 @@
-import Foundation
+import Cocoa
 
 setlinebuf(stdout)
 setlinebuf(stderr)
@@ -12,19 +12,18 @@ func printHelp() {
 
     \u{001B}[1mBEFEHLE:\u{001B}[0m
       \u{001B}[32m(ohne Arg)\u{001B}[0m, \u{001B}[32moptimize\u{001B}[0m   Optimiert die Fenster im aktuellen Space sofort einmalig
-      \u{001B}[32mdaemon\u{001B}[0m               Startet den Hintergrunddienst mit globalem Tastenkürzel
+      \u{001B}[32mgui\u{001B}[0m, \u{001B}[32msettings\u{001B}[0m        Öffnet die grafische Benutzeroberfläche (GUI)
+      \u{001B}[32mlearn\u{001B}[0m                Speichert das aktuelle Fensterlayout für dieses App-Set im Space-Gedächtnis
+      \u{001B}[32mdaemon\u{001B}[0m               Startet den Hintergrunddienst mit globalen Shortcuts
       \u{001B}[32minstall\u{001B}[0m              Installiert SpaceTile als dauerhaften Hintergrund-Dienst (LaunchAgent)
       \u{001B}[32muninstall\u{001B}[0m            Entfernt den Hintergrund-Dienst
       \u{001B}[32mstatus\u{001B}[0m               Zeigt an, ob der Dienst im Hintergrund aktiv ist
-      \u{001B}[32mconfig\u{001B}[0m               Zeigt die aktuelle Konfiguration und ihren Speicherort
+      \u{001B}[32mconfig\u{001B}[0m               Zeigt die aktuelle Konfiguration
       \u{001B}[32mhelp\u{001B}[0m                 Zeigt diese Hilfe an
 
-    \u{001B}[1mSTANDARD-SHORTCUT IM DAEMON-MODUS:\u{001B}[0m
-      ⌃ + ⌥ + ⌘ + Leertaste  (Control + Option + Command + Space)
-
-    \u{001B}[1mTRICK:\u{001B}[0m
-      Drückst du den Shortcut innerhalb von 2 Sekunden mehrmals, wechselt das
-      Layout automatisch zwischen 62% Fokus, 50/50 Split und 75% Fokus!
+    \u{001B}[1mSTANDARD-SHORTCUTS:\u{001B}[0m
+      Hyper + Leertaste  (⌃⌥⇧⌘ + Space)  ➔ Fenster optimieren
+      Hyper + S          (⌃⌥⇧⌘ + S)      ➔ Einstellungen GUI öffnen
     """)
 }
 
@@ -34,6 +33,19 @@ let command = args.first?.lowercased() ?? "optimize"
 switch command {
 case "optimize", "run":
     _ = WindowManager.shared.optimize(verbose: true)
+
+case "gui", "settings":
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    SettingsWindowController.shared.show()
+    app.run()
+
+case "learn":
+    if let msg = SpaceObserver.shared.learnCurrentLayoutNow() {
+        print("[\u{001B}[32mSpaceTile\u{001B}[0m] \(msg)")
+    } else {
+        print("[\u{001B}[31mSpaceTile\u{001B}[0m] Konnte aktuelles Layout nicht erfassen.")
+    }
 
 case "daemon":
     Daemon.run()
@@ -48,12 +60,19 @@ case "status":
     ServiceInstaller.status()
 
 case "config":
-    let config = Config.load()
-    print("Konfigurationsdatei: \(Config.configURL.path)")
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    if let data = try? encoder.encode(config), let str = String(data: data, encoding: .utf8) {
-        print("\nAktuelle Einstellungen:\n\(str)")
+    if args.contains("--gui") {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.regular)
+        SettingsWindowController.shared.show()
+        app.run()
+    } else {
+        let config = Config.load()
+        print("Konfigurationsdatei: \(Config.configURL.path)")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(config), let str = String(data: data, encoding: .utf8) {
+            print("\nAktuelle Einstellungen:\n\(str)")
+        }
     }
 
 case "help", "--help", "-h":

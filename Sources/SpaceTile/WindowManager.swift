@@ -30,22 +30,7 @@ class WindowManager {
 
         let config = Config.load()
 
-        // 1. Ratio cycling (if triggered rapidly within 2 seconds)
-        let now = Date()
-        let effectiveRatio: Double
-        if let last = lastRunTime, now.timeIntervalSince(last) < 2.2, !config.cycleRatios.isEmpty {
-            cycleIndex = (cycleIndex + 1) % config.cycleRatios.count
-            effectiveRatio = config.cycleRatios[cycleIndex]
-            if verbose {
-                print("[\u{001B}[36mCYCLE\u{001B}[0m] Umschalten auf Layout-Verhältnis: \(Int(effectiveRatio * 100))%")
-            }
-        } else {
-            cycleIndex = 0
-            effectiveRatio = config.masterRatio
-        }
-        lastRunTime = now
-
-        // 2. Determine target display
+        // 1. Determine target display
         guard let targetScreen = findTargetScreen() else {
             if verbose { print("[\u{001B}[31mFEHLER\u{001B}[0m] Kein aktiver Bildschirm gefunden.") }
             return false
@@ -54,7 +39,6 @@ class WindowManager {
         guard let primaryScreen = NSScreen.screens.first else { return false }
         let primaryHeight = primaryScreen.frame.height
 
-        // Calculate AX visible frame for target screen
         let vf = targetScreen.visibleFrame
         let axVisibleRect = CGRect(
             x: vf.origin.x,
@@ -63,29 +47,63 @@ class WindowManager {
             height: vf.height
         )
 
-        // Apply margins
         let workArea = axVisibleRect.insetBy(dx: config.margin, dy: config.margin)
         guard workArea.width > 200 && workArea.height > 200 else { return false }
 
-        // 3. Find visible on-screen windows on the current Space
+        // 2. Find visible windows on current Space
         let windows = collectWindowsOnCurrentSpace(screenBounds: axVisibleRect, ignoredApps: Set(config.ignoredApps))
-
         if windows.isEmpty {
             if verbose { print("[\u{001B}[33mINFO\u{001B}[0m] Keine relevanten Fenster im aktuellen Space gefunden.") }
             return true
         }
 
+        let appNames = Array(Set(windows.map { $0.appName })).sorted()
+        let resKey = "\(Int(targetScreen.frame.width))x\(Int(targetScreen.frame.height))"
+
+        // 3. Ratio determination (Cycle vs. Memory vs. Semantic Heuristic)
+        let now = Date()
+        var effectiveRatio: Double = config.masterRatio
+        var layoutReason: String = "Standard Master-Stack (\(Int(effectiveRatio * 100))%)"
+
+        let isRapidCycle = (lastRunTime != nil && now.timeIntervalSince(lastRunTime!) < 2.2 && !config.cycleRatios.isEmpty)
+        if isRapidCycle {
+            cycleIndex = (cycleIndex + 1) % config.cycleRatios.count
+            effectiveRatio = config.cycleRatios[cycleIndex]
+            layoutReason = "Zyklus-Umschaltung (\(Int(effectiveRatio * 100))%)"
+        } else {
+            cycleIndex = 0
+
+            // Check learned space memory
+            if config.enableSpaceLearning,
+               let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
+               let learned = profile.learnedMasterRatio, profile.observationsCount >= 2 {
+                effectiveRatio = learned
+                layoutReason = "🧠 Gelerntes Space-Gedächtnis (\(Int(learned * 100))%)"
+            }
+            // Check semantic Side-by-Side (Notes + Browser)
+            else if config.sideBySideForNotesAndBrowser && windows.count == 2 {
+                let categories = windows.map { getAppCategory(appName: $0.appName, config: config) }
+                if (categories.contains("browser") && categories.contains("notes")) ||
+                   (categories.contains("notes") && categories.contains("custom")) {
+                    effectiveRatio = 0.50
+                    layoutReason = "📖 Side-by-Side (50/50 Lese- & Notizmodus)"
+                }
+            }
+        }
+        lastRunTime = now
+
         if verbose {
-            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Optimiere \(windows.count) Fenster auf Bildschirm '\(targetScreen.localizedName)'...")
+            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Optimiere \(windows.count) Fenster auf '\(targetScreen.localizedName)' [\(layoutReason)]...")
         }
 
-        // 4. Calculate frames according to layout
+        // 4. Calculate frames with intelligent constraints
         let frames = calculateLayout(
-            count: windows.count,
+            windows: windows,
             area: workArea,
-            gap: config.gap,
+            screen: targetScreen,
+            config: config,
             ratio: effectiveRatio,
-            singleMode: config.singleWindowMode
+            isRapidCycle: isRapidCycle
         )
 
         // 5. Apply positions & sizes
@@ -95,10 +113,12 @@ class WindowManager {
 
             if verbose {
                 let tag = win.isFocused ? "\u{001B}[32m★ Master\u{001B}[0m" : "\u{001B}[37m  Stack \u{001B}[0m"
-                let titleShort = win.title.isEmpty ? "(ohne Titel)" : String(win.title.prefix(35))
-                print(String(format: " %@[%@] \"%@\" -> %dx%d @ (%d, %d)",
+                let titleShort = win.title.isEmpty ? "(ohne Titel)" : String(win.title.prefix(32))
+                let category = getAppCategory(appName: win.appName, config: config)
+                print(String(format: " %@[%@ (%@)] \"%@\" -> %dx%d @ (%d, %d)",
                              tag,
                              win.appName,
+                             category,
                              titleShort,
                              Int(targetFrame.width),
                              Int(targetFrame.height),
@@ -110,8 +130,119 @@ class WindowManager {
         return true
     }
 
+    private func getAppCategory(appName: String, config: Config) -> String {
+        if let match = config.appConstraints.first(where: { $0.appName.lowercased() == appName.lowercased() }) {
+            return match.category
+        }
+        let lower = appName.lowercased()
+        if lower.contains("term") || lower.contains("alacritty") || lower.contains("kitty") || lower.contains("ghostty") {
+            return "terminal"
+        }
+        if lower.contains("chrome") || lower.contains("safari") || lower.contains("firefox") || lower.contains("arc") || lower.contains("browser") {
+            return "browser"
+        }
+        if lower.contains("notes") || lower.contains("obsidian") || lower.contains("bear") || lower.contains("textedit") || lower.contains("notion") {
+            return "notes"
+        }
+        if lower.contains("code") || lower.contains("xcode") || lower.contains("sublime") || lower.contains("studio") {
+            return "editor"
+        }
+        return "custom"
+    }
+
+    private func calculateLayout(
+        windows: [ManagedWindow],
+        area: CGRect,
+        screen: NSScreen,
+        config: Config,
+        ratio: Double,
+        isRapidCycle: Bool
+    ) -> [CGRect] {
+        let count = windows.count
+        guard count > 0 else { return [] }
+
+        let gap = config.gap
+        let master = windows[0]
+        let masterCategory = getAppCategory(appName: master.appName, config: config)
+
+        // 1 Window
+        if count == 1 {
+            if config.singleWindowMode == "maximized" {
+                return [area]
+            } else {
+                let w = area.width * 0.75
+                let h = area.height * 0.95
+                let x = area.origin.x + (area.width - w) / 2
+                let y = area.origin.y + (area.height - h) / 2
+                return [CGRect(x: x, y: y, width: w, height: h)]
+            }
+        }
+
+        let availW = area.width - gap
+        var masterW: Double = floor(availW * ratio)
+
+        // Smart Constraint: Terminal on 4K/Ultra-Wide screens
+        let isUltraWide = screen.frame.width >= 2560
+        if config.enableSmartWeighting && !isRapidCycle && masterCategory == "terminal" && isUltraWide {
+            let maxTerminalW = min(config.terminalMaxWidth4K, floor(availW * config.terminalMaxRatio4K))
+            masterW = min(masterW, maxTerminalW)
+        }
+
+        let stackW = availW - masterW
+
+        // 2 Windows
+        if count == 2 {
+            let r0 = CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height)
+            let r1 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y, width: stackW, height: area.height)
+            return [r0, r1]
+        }
+
+        // 3 Windows
+        if count == 3 {
+            let availH = area.height - gap
+            let itemH = floor(availH / 2.0)
+            let itemH2 = availH - itemH
+
+            let r0 = CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height)
+            let r1 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y, width: stackW, height: itemH)
+            let r2 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y + itemH + gap, width: stackW, height: itemH2)
+            return [r0, r1, r2]
+        }
+
+        // 4 Windows: Grid when ratio is 0.50
+        if count == 4 && abs(ratio - 0.5) < 0.05 {
+            let colW = floor((area.width - gap) / 2.0)
+            let rowH = floor((area.height - gap) / 2.0)
+            let colW2 = area.width - gap - colW
+            let rowH2 = area.height - gap - rowH
+
+            let p0 = CGRect(x: area.origin.x, y: area.origin.y, width: colW, height: rowH)
+            let p1 = CGRect(x: area.origin.x + colW + gap, y: area.origin.y, width: colW2, height: rowH)
+            let p2 = CGRect(x: area.origin.x, y: area.origin.y + rowH + gap, width: colW, height: rowH2)
+            let p3 = CGRect(x: area.origin.x + colW + gap, y: area.origin.y + rowH + gap, width: colW2, height: rowH2)
+            return [p0, p1, p2, p3]
+        }
+
+        // N Windows (1 Master, N-1 Stack)
+        let stackCount = count - 1
+        let totalGaps = gap * Double(stackCount - 1)
+        let totalStackH = area.height - totalGaps
+        let baseItemH = floor(totalStackH / Double(stackCount))
+
+        var result: [CGRect] = []
+        result.append(CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height))
+
+        var currentY = area.origin.y
+        for i in 0..<stackCount {
+            let itemH = (i == stackCount - 1) ? (area.origin.y + area.height - currentY) : baseItemH
+            result.append(CGRect(x: area.origin.x + masterW + gap, y: currentY, width: stackW, height: itemH))
+            currentY += itemH + gap
+        }
+
+        return result
+    }
+
     private func findTargetScreen() -> NSScreen? {
-        // Try screen containing frontmost window, fallback to mouse location
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             let appRef = AXUIElementCreateApplication(frontApp.processIdentifier)
             var focusedWinRef: CFTypeRef?
@@ -139,7 +270,6 @@ class WindowManager {
             }
         }
 
-        // Fallback to mouse location
         let mouseLoc = NSEvent.mouseLocation
         for screen in NSScreen.screens {
             if screen.frame.contains(mouseLoc) {
@@ -150,7 +280,7 @@ class WindowManager {
         return NSScreen.main ?? NSScreen.screens.first
     }
 
-    private func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>) -> [ManagedWindow] {
+    func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>) -> [ManagedWindow] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let cgWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
@@ -167,7 +297,6 @@ class WindowManager {
             let y = bounds["Y"] as? Double ?? 0
             let rect = CGRect(x: x, y: y, width: w, height: h)
 
-            // Only normal windows on target screen
             if layer == 0 && w >= 150 && h >= 150 && rect.intersects(screenBounds) {
                 onScreenMap[id] = order
             }
@@ -204,7 +333,6 @@ class WindowManager {
                     continue
                 }
 
-                // Check minimized
                 var minRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef) == .success,
                    let isMin = minRef as? Bool, isMin {
@@ -228,7 +356,6 @@ class WindowManager {
             }
         }
 
-        // Sort: Focused window first, then by zOrder (front-to-back)
         managed.sort { a, b in
             if a.isFocused != b.isFocused {
                 return a.isFocused
@@ -239,99 +366,18 @@ class WindowManager {
         return managed
     }
 
-    private func calculateLayout(count: Int, area: CGRect, gap: Double, ratio: Double, singleMode: String) -> [CGRect] {
-        guard count > 0 else { return [] }
-
-        if count == 1 {
-            if singleMode == "maximized" {
-                return [area]
-            } else {
-                // Comfortable centered focus
-                let w = area.width * 0.75
-                let h = area.height * 0.95
-                let x = area.origin.x + (area.width - w) / 2
-                let y = area.origin.y + (area.height - h) / 2
-                return [CGRect(x: x, y: y, width: w, height: h)]
-            }
-        }
-
-        if count == 2 {
-            let availW = area.width - gap
-            let masterW = floor(availW * ratio)
-            let stackW = availW - masterW
-
-            let master = CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height)
-            let secondary = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y, width: stackW, height: area.height)
-            return [master, secondary]
-        }
-
-        if count == 3 {
-            let availW = area.width - gap
-            let masterW = floor(availW * ratio)
-            let stackW = availW - masterW
-
-            let availH = area.height - gap
-            let itemH = floor(availH / 2.0)
-            let itemH2 = availH - itemH
-
-            let master = CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height)
-            let stack1 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y, width: stackW, height: itemH)
-            let stack2 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y + itemH + gap, width: stackW, height: itemH2)
-            return [master, stack1, stack2]
-        }
-
-        if count == 4 && abs(ratio - 0.5) < 0.05 {
-            // 2x2 Grid when ratio is 50%
-            let colW = floor((area.width - gap) / 2.0)
-            let rowH = floor((area.height - gap) / 2.0)
-            let colW2 = area.width - gap - colW
-            let rowH2 = area.height - gap - rowH
-
-            let p0 = CGRect(x: area.origin.x, y: area.origin.y, width: colW, height: rowH)
-            let p1 = CGRect(x: area.origin.x + colW + gap, y: area.origin.y, width: colW2, height: rowH)
-            let p2 = CGRect(x: area.origin.x, y: area.origin.y + rowH + gap, width: colW, height: rowH2)
-            let p3 = CGRect(x: area.origin.x + colW + gap, y: area.origin.y + rowH + gap, width: colW2, height: rowH2)
-            return [p0, p1, p2, p3]
-        }
-
-        // Master on left, N-1 vertically stacked on right
-        let availW = area.width - gap
-        let masterW = floor(availW * ratio)
-        let stackW = availW - masterW
-
-        let stackCount = count - 1
-        let totalGaps = gap * Double(stackCount - 1)
-        let totalStackH = area.height - totalGaps
-        let baseItemH = floor(totalStackH / Double(stackCount))
-
-        var result: [CGRect] = []
-        result.append(CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height))
-
-        var currentY = area.origin.y
-        for i in 0..<stackCount {
-            let itemH = (i == stackCount - 1) ? (area.origin.y + area.height - currentY) : baseItemH
-            result.append(CGRect(x: area.origin.x + masterW + gap, y: currentY, width: stackW, height: itemH))
-            currentY += itemH + gap
-        }
-
-        return result
-    }
-
     private func setWindowFrame(_ element: AXUIElement, target: CGRect) {
         var pos = target.origin
         var size = target.size
 
-        // 1. Move position
         if let valPos = AXValueCreate(.cgPoint, &pos) {
             AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
         }
 
-        // 2. Set size
         if let valSize = AXValueCreate(.cgSize, &size) {
             AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, valSize)
         }
 
-        // 3. Settle position (in case macOS constrained size before move)
         if let valPos = AXValueCreate(.cgPoint, &pos) {
             AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
         }

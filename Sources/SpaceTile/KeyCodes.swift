@@ -81,6 +81,8 @@ struct KeyCodes {
                 mask |= UInt32(controlKey)
             case "shift":
                 mask |= UInt32(shiftKey)
+            case "hyper", "super":
+                mask |= UInt32(cmdKey | optionKey | controlKey | shiftKey)
             default:
                 break
             }
