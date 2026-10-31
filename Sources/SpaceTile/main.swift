@@ -50,6 +50,9 @@ case "learn":
 case "daemon":
     Daemon.run()
 
+case "restart":
+    ServiceInstaller.restart()
+
 case "install":
     ServiceInstaller.install()
 

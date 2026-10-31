@@ -95,6 +95,23 @@ struct ServiceInstaller {
         print("Tipp: Logs findest du unter: ~/Library/Logs/SpaceTile/stdout.log")
     }
 
+    static func restart() {
+        let unloadProc = Process()
+        unloadProc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        unloadProc.arguments = ["unload", plistURL.path]
+        try? unloadProc.run()
+        unloadProc.waitUntilExit()
+
+        usleep(300_000)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["load", "-w", plistURL.path]
+        try? process.run()
+        process.waitUntilExit()
+        print("[\u{001B}[32mOK\u{001B}[0m] SpaceTile Daemon neu gestartet.")
+    }
+
     static func uninstall() {
         let fileManager = FileManager.default
 
