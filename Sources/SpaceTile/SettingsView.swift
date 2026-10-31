@@ -2,130 +2,135 @@ import SwiftUI
 import Combine
 import ApplicationServices
 
-// MARK: - Animated Visualizer (Preserving Signature Gray Tiles + Morphing Animation)
+// MARK: - Animated 16:9 Display Visualizer (No Glow, Settings Matched Colors)
 struct AnimatedTileVisualizer: View {
+    var width: CGFloat = 64
+    var height: CGFloat = 36
     @State private var layoutStep = 0
-    let timer = Timer.publish(every: 2.8, on: .main, in: .common).autoconnect()
+    let timer = Timer.publish(every: 2.4, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(NSColor.controlBackgroundColor).opacity(0.85))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.cyan.opacity(0.4), lineWidth: 1.5)
-                )
+        VStack(spacing: 1.5) {
+            // Sleek 16:9 Monitor Enclosure
+            ZStack {
+                // Monitor Bezel
+                RoundedRectangle(cornerRadius: 3.5)
+                    .fill(Color(NSColor.darkGray).opacity(0.55))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3.5)
+                            .stroke(Color.primary.opacity(0.25), lineWidth: 1)
+                    )
 
-            GeometryReader { geo in
-                let w = geo.size.width
-                let h = geo.size.height
-                let pad: CGFloat = 8
-                let gap: CGFloat = 4
+                // Screen Glass Area
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    let h = geo.size.height
+                    let pad: CGFloat = 2.5
+                    let gap: CGFloat = 1.5
 
-                let innerW = w - 2 * pad
-                let innerH = h - 2 * pad
+                    let innerW = w - 2 * pad
+                    let innerH = h - 2 * pad
 
-                let cellW = (innerW - 2 * gap) / 3.0
-                let cellH = (innerH - 2 * gap) / 3.0
+                    let cellW = (innerW - 2 * gap) / 3.0
+                    let cellH = (innerH - 2 * gap) / 3.0
 
-                // Mode 0: 6-Window Signature Layout (2/3 Top-Left Master, 3 Right, 2 Bottom)
-                // Mode 1: 50/50 Side-by-Side
-                // Mode 2: Master-Stack (62/38)
-                let mode = layoutStep % 3
+                    // Mode 0: 6-Window Signature (2/3 Top-Left Master, 3 Right, 2 Bottom)
+                    // Mode 1: 50/50 Side-by-Side
+                    // Mode 2: Master-Stack (62/38)
+                    let mode = layoutStep % 3
 
-                // Master Frame
-                let masterFrame: CGRect = {
-                    if mode == 0 {
-                        return CGRect(x: pad, y: pad, width: 2 * cellW + gap, height: 2 * cellH + gap)
-                    } else if mode == 1 {
-                        return CGRect(x: pad, y: pad, width: (innerW - gap) * 0.50, height: innerH)
-                    } else {
-                        return CGRect(x: pad, y: pad, width: (innerW - gap) * 0.62, height: innerH)
-                    }
-                }()
+                    let masterFrame: CGRect = {
+                        if mode == 0 {
+                            return CGRect(x: pad, y: pad, width: 2 * cellW + gap, height: 2 * cellH + gap)
+                        } else if mode == 1 {
+                            return CGRect(x: pad, y: pad, width: (innerW - gap) * 0.50, height: innerH)
+                        } else {
+                            return CGRect(x: pad, y: pad, width: (innerW - gap) * 0.62, height: innerH)
+                        }
+                    }()
 
-                // Right 1 (top-right)
-                let r1Frame: CGRect = {
-                    if mode == 0 {
-                        return CGRect(x: pad + 2 * (cellW + gap), y: pad, width: cellW, height: cellH)
-                    } else if mode == 1 {
-                        return CGRect(x: pad + (innerW - gap) * 0.50 + gap, y: pad, width: (innerW - gap) * 0.50, height: (innerH - gap) / 2)
-                    } else {
-                        return CGRect(x: pad + (innerW - gap) * 0.62 + gap, y: pad, width: (innerW - gap) * 0.38, height: (innerH - 2 * gap) / 3)
-                    }
-                }()
+                    let r1Frame: CGRect = {
+                        if mode == 0 {
+                            return CGRect(x: pad + 2 * (cellW + gap), y: pad, width: cellW, height: cellH)
+                        } else if mode == 1 {
+                            return CGRect(x: pad + (innerW - gap) * 0.50 + gap, y: pad, width: (innerW - gap) * 0.50, height: (innerH - gap) / 2)
+                        } else {
+                            return CGRect(x: pad + (innerW - gap) * 0.62 + gap, y: pad, width: (innerW - gap) * 0.38, height: (innerH - 2 * gap) / 3)
+                        }
+                    }()
 
-                // Right 2 (mid-right)
-                let r2Frame: CGRect = {
-                    if mode == 0 {
-                        return CGRect(x: pad + 2 * (cellW + gap), y: pad + cellH + gap, width: cellW, height: cellH)
-                    } else if mode == 1 {
-                        return CGRect(x: pad + (innerW - gap) * 0.50 + gap, y: pad + (innerH - gap) / 2 + gap, width: (innerW - gap) * 0.50, height: (innerH - gap) / 2)
-                    } else {
-                        return CGRect(x: pad + (innerW - gap) * 0.62 + gap, y: pad + (innerH - 2 * gap) / 3 + gap, width: (innerW - gap) * 0.38, height: (innerH - 2 * gap) / 3)
-                    }
-                }()
+                    let r2Frame: CGRect = {
+                        if mode == 0 {
+                            return CGRect(x: pad + 2 * (cellW + gap), y: pad + cellH + gap, width: cellW, height: cellH)
+                        } else if mode == 1 {
+                            return CGRect(x: pad + (innerW - gap) * 0.50 + gap, y: pad + (innerH - gap) / 2 + gap, width: (innerW - gap) * 0.50, height: (innerH - gap) / 2)
+                        } else {
+                            return CGRect(x: pad + (innerW - gap) * 0.62 + gap, y: pad, width: (innerW - gap) * 0.38, height: (innerH - 2 * gap) / 3)
+                        }
+                    }()
 
-                // Right 3 (bottom-right)
-                let r3Frame: CGRect = {
-                    if mode == 0 {
-                        return CGRect(x: pad + 2 * (cellW + gap), y: pad + 2 * (cellH + gap), width: cellW, height: cellH)
-                    } else if mode == 1 {
-                        return CGRect(x: pad + (innerW - gap) * 0.50 + gap, y: pad + (innerH - gap) / 2 + gap, width: (innerW - gap) * 0.50, height: 0)
-                    } else {
-                        return CGRect(x: pad + (innerW - gap) * 0.62 + gap, y: pad + 2 * ((innerH - 2 * gap) / 3 + gap), width: (innerW - gap) * 0.38, height: (innerH - 2 * gap) / 3)
-                    }
-                }()
+                    let r3Frame: CGRect = {
+                        if mode == 0 {
+                            return CGRect(x: pad + 2 * (cellW + gap), y: pad + 2 * (cellH + gap), width: cellW, height: cellH)
+                        } else if mode == 1 {
+                            return CGRect(x: pad + (innerW - gap) * 0.50 + gap, y: pad + (innerH - gap) / 2 + gap, width: (innerW - gap) * 0.50, height: 0)
+                        } else {
+                            return CGRect(x: pad + (innerW - gap) * 0.62 + gap, y: pad + 2 * ((innerH - 2 * gap) / 3 + gap), width: (innerW - gap) * 0.38, height: (innerH - 2 * gap) / 3)
+                        }
+                    }()
 
-                // Bottom 1 (bottom-left under master)
-                let b1Frame: CGRect = {
-                    if mode == 0 {
-                        return CGRect(x: pad, y: pad + 2 * (cellH + gap), width: cellW, height: cellH)
-                    } else {
-                        return CGRect(x: pad, y: pad, width: 0, height: 0)
-                    }
-                }()
+                    let b1Frame: CGRect = {
+                        if mode == 0 {
+                            return CGRect(x: pad, y: pad + 2 * (cellH + gap), width: cellW, height: cellH)
+                        } else {
+                            return CGRect(x: pad, y: pad, width: 0, height: 0)
+                        }
+                    }()
 
-                // Bottom 2 (bottom-mid under master)
-                let b2Frame: CGRect = {
-                    if mode == 0 {
-                        return CGRect(x: pad + cellW + gap, y: pad + 2 * (cellH + gap), width: cellW, height: cellH)
-                    } else {
-                        return CGRect(x: pad, y: pad, width: 0, height: 0)
-                    }
-                }()
+                    let b2Frame: CGRect = {
+                        if mode == 0 {
+                            return CGRect(x: pad + cellW + gap, y: pad + 2 * (cellH + gap), width: cellW, height: cellH)
+                        } else {
+                            return CGRect(x: pad, y: pad, width: 0, height: 0)
+                        }
+                    }()
 
-                ZStack(alignment: .topLeading) {
-                    // Master Cyan Window
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.cyan, Color.blue],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
+                    ZStack(alignment: .topLeading) {
+                        // Master Window (Settings Blue/Cyan palette, No Blur Glow)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(red: 0.0, green: 0.38, blue: 0.58), Color(red: 0.01, green: 0.52, blue: 0.78)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
                             )
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.white.opacity(0.5), lineWidth: 1.2)
-                        )
-                        .frame(width: max(0, masterFrame.width), height: max(0, masterFrame.height))
-                        .offset(x: masterFrame.origin.x, y: masterFrame.origin.y)
-                        .shadow(color: .cyan.opacity(0.4), radius: 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 2)
+                                    .stroke(Color.cyan.opacity(0.65), lineWidth: 0.8)
+                            )
+                            .frame(width: max(0, masterFrame.width), height: max(0, masterFrame.height))
+                            .offset(x: masterFrame.origin.x, y: masterFrame.origin.y)
 
-                    // Secondary Gray / Frosted Windows
-                    grayTile(frame: r1Frame)
-                    grayTile(frame: r2Frame)
-                    if mode != 1 { grayTile(frame: r3Frame) }
-                    if mode == 0 {
-                        grayTile(frame: b1Frame)
-                        grayTile(frame: b2Frame)
+                        // Secondary Windows (Frosted slate)
+                        miniTile(frame: r1Frame)
+                        miniTile(frame: r2Frame)
+                        if mode != 1 { miniTile(frame: r3Frame) }
+                        if mode == 0 {
+                            miniTile(frame: b1Frame)
+                            miniTile(frame: b2Frame)
+                        }
                     }
+                    .animation(.spring(response: 0.50, dampingFraction: 0.75), value: layoutStep)
                 }
-                .animation(.spring(response: 0.55, dampingFraction: 0.72), value: layoutStep)
             }
+            .frame(width: width, height: height)
+
+            // Sleek Aluminum Monitor Foot / Stand
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color(NSColor.tertiaryLabelColor).opacity(0.6))
+                .frame(width: width * 0.28, height: 2.2)
         }
-        .frame(width: 86, height: 62)
         .onReceive(timer) { _ in
             layoutStep += 1
         }
@@ -134,188 +139,213 @@ struct AnimatedTileVisualizer: View {
         }
     }
 
-    private func grayTile(frame: CGRect) -> some View {
-        RoundedRectangle(cornerRadius: 4)
+    private func miniTile(frame: CGRect) -> some View {
+        RoundedRectangle(cornerRadius: 1.5)
             .fill(Color(NSColor.textColor).opacity(0.18))
             .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color(NSColor.textColor).opacity(0.35), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 1.5)
+                    .stroke(Color(NSColor.textColor).opacity(0.35), lineWidth: 0.6)
             )
             .frame(width: max(0, frame.width), height: max(0, frame.height))
             .offset(x: frame.origin.x, y: frame.origin.y)
     }
 }
 
-// MARK: - Live 10x6 Matrix Visualizer
-struct LiveMatrixVisualizer: View {
+// MARK: - Live Grid Interactive Visualizer (Exact Usable Aspect Ratio, Real Windows, Semi-Transparent, Double-Click Master)
+struct LiveGridView: View {
     let windows: [ManagedWindow]
+    let onSetMasterAndRearrange: (CGWindowID, String) -> Void
+    let onToggleLock: (CGWindowID) -> Void
 
     var body: some View {
-        VStack(spacing: 6) {
-            // Header bar for matrix
+        VStack(alignment: .leading, spacing: 8) {
+            // Header bar
             HStack {
-                Label("Virtual Desktop Matrix (10 × 6 Grid)", systemImage: "square.grid.3x3.fill")
-                    .font(.caption.bold())
-                    .foregroundColor(.cyan)
+                HStack(spacing: 6) {
+                    Image(systemName: "square.split.2x2")
+                        .foregroundColor(.cyan)
+                    Text("Live Space Canvas")
+                        .font(.subheadline.bold())
+                }
 
                 Spacer()
 
-                Text(windows.isEmpty ? "Simulated Layout • 3 Windows" : "\(windows.count) Active Windows on Space")
-                    .font(.caption2.bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.cyan.opacity(0.12))
-                    .foregroundColor(.cyan)
-                    .cornerRadius(4)
-            }
-
-            // Matrix Screen Canvas
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.65))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    )
-
-                GeometryReader { geo in
-                    let w = geo.size.width
-                    let h = geo.size.height
-                    let masterW = max(180, w * 0.58)
-                    let stackW = max(120, w - masterW - 8)
-                    let stackH = (h - 8) / 2.0
-
-                    HStack(spacing: 8) {
-                        // Master Window Slot (60% width, 100% height)
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                HStack(spacing: 4) {
-                                    Circle().fill(Color.red.opacity(0.85)).frame(width: 7, height: 7)
-                                    Circle().fill(Color.orange.opacity(0.85)).frame(width: 7, height: 7)
-                                    Circle().fill(Color.green.opacity(0.85)).frame(width: 7, height: 7)
-                                    Text(masterAppName)
-                                        .font(.caption2.bold())
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                HStack(spacing: 4) {
-                                    if isMasterLocked {
-                                        Image(systemName: "lock.fill")
-                                            .font(.caption2)
-                                            .foregroundColor(.orange)
-                                    }
-                                    Text("MASTER (60%)")
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                        .padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(Color.blue.opacity(0.2))
-                                        .foregroundColor(.blue)
-                                        .cornerRadius(3)
-                                }
-                            }
-
-                            Spacer()
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(masterTitle)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                Text("Cols 1-6 • Rows 1-6 (10x6 Grid Matrix)")
-                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.cyan.opacity(0.9))
-                            }
-                        }
-                        .padding(8)
-                        .frame(width: masterW, height: h)
-                        .background(
-                            LinearGradient(
-                                colors: [Color.blue.opacity(0.22), Color.cyan.opacity(0.10)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.cyan.opacity(0.4), lineWidth: 1.2)
-                        )
-                        .cornerRadius(6)
-
-                        // Secondary Stack Column (40% width)
-                        VStack(spacing: 8) {
-                            // Stack 1 (Top)
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(stack1AppName)
-                                        .font(.caption2.bold())
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Text("STACK 1 (40%)")
-                                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                                        .padding(.horizontal, 4).padding(.vertical, 1)
-                                        .background(Color.secondary.opacity(0.15))
-                                        .cornerRadius(3)
-                                }
-                                Spacer()
-                                Text("Cols 7-10 • Rows 1-3")
-                                    .font(.system(size: 8, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(6)
-                            .frame(width: stackW, height: stackH)
-                            .background(Color(NSColor.textColor).opacity(0.08))
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                            .cornerRadius(6)
-
-                            // Stack 2 (Bottom)
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(stack2AppName)
-                                        .font(.caption2.bold())
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Text("STACK 2 (40%)")
-                                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                                        .padding(.horizontal, 4).padding(.vertical, 1)
-                                        .background(Color.secondary.opacity(0.15))
-                                        .cornerRadius(3)
-                                }
-                                Spacer()
-                                Text("Cols 7-10 • Rows 4-6")
-                                    .font(.system(size: 8, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(6)
-                            .frame(width: stackW, height: stackH)
-                            .background(Color(NSColor.textColor).opacity(0.08))
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                            .cornerRadius(6)
-                        }
-                    }
-                    .padding(6)
+                HStack(spacing: 5) {
+                    Image(systemName: "hand.tap.fill")
+                        .font(.caption2)
+                        .foregroundColor(.cyan)
+                    Text("Double-click any window to set as Master & rearrange")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
             }
-            .frame(height: 125)
+
+            // Screen Canvas (strictly matching workArea aspect ratio, no pixel labels)
+            GeometryReader { geo in
+                let w = geo.size.width
+                let h = geo.size.height
+
+                ZStack(alignment: .topLeading) {
+                    // Desktop Background
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(NSColor.controlBackgroundColor).opacity(0.65))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                        )
+
+                    // Spanned Grid Raster
+                    gridRaster(width: w, height: h)
+
+                    // Render Windows
+                    if windows.isEmpty {
+                        VStack(spacing: 6) {
+                            Image(systemName: "rectangle.badge.xmark")
+                                .font(.system(size: 20))
+                                .foregroundColor(.secondary)
+                            Text("No application windows detected on this Space.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(width: w, height: h, alignment: .center)
+                    } else {
+                        ForEach(Array(windows.enumerated()), id: \.element.id) { index, win in
+                            windowBox(index: index, win: win, canvasW: w, canvasH: h)
+                        }
+                    }
+                }
+            }
+            .aspectRatio(workAreaAspect, contentMode: .fit)
+            .frame(maxHeight: 200)
         }
     }
 
-    private var masterAppName: String {
-        windows.first?.appName ?? "VS Code / Cursor"
+    private var currentScreen: NSScreen {
+        NSScreen.main ?? NSScreen.screens.first!
     }
 
-    private var masterTitle: String {
-        windows.first?.title.isEmpty == false ? windows.first!.title : "Primary Editor / Document"
+    private var workAreaAspect: CGFloat {
+        let vf = currentScreen.visibleFrame
+        return max(1.0, vf.width) / max(1.0, vf.height)
     }
 
-    private var isMasterLocked: Bool {
-        windows.first?.isLocked ?? false
+    private var axRect: CGRect {
+        let vf = currentScreen.visibleFrame
+        let primaryH = NSScreen.screens.first?.frame.height ?? 0
+        return CGRect(
+            x: vf.origin.x,
+            y: primaryH - (vf.origin.y + vf.height),
+            width: vf.width,
+            height: vf.height
+        )
     }
 
-    private var stack1AppName: String {
-        windows.count > 1 ? windows[1].appName : "Arc / Safari Browser"
+    // Dynamic grid cols & rows spanned across display
+    private var gridDimensions: (cols: Int, rows: Int) {
+        let count = windows.count
+        if count <= 1 { return (1, 1) }
+        if count == 2 { return (2, 1) }
+        if count <= 4 { return (2, 2) }
+        if count <= 6 { return (3, 2) }
+        return (10, 6)
     }
 
-    private var stack2AppName: String {
-        windows.count > 2 ? windows[2].appName : "iTerm2 / Terminal"
+    private func gridRaster(width: CGFloat, height: CGFloat) -> some View {
+        let (cols, rows) = gridDimensions
+        return ZStack {
+            ForEach(1..<cols, id: \.self) { c in
+                let xPct = CGFloat(c) / CGFloat(cols)
+                Path { p in
+                    p.move(to: CGPoint(x: xPct * width, y: 0))
+                    p.addLine(to: CGPoint(x: xPct * width, y: height))
+                }
+                .stroke(Color.primary.opacity(0.08), style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+            }
+            ForEach(1..<rows, id: \.self) { r in
+                let yPct = CGFloat(r) / CGFloat(rows)
+                Path { p in
+                    p.move(to: CGPoint(x: 0, y: yPct * height))
+                    p.addLine(to: CGPoint(x: width, y: yPct * height))
+                }
+                .stroke(Color.primary.opacity(0.08), style: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+            }
+        }
+    }
+
+    private func windowBox(index: Int, win: ManagedWindow, canvasW: CGFloat, canvasH: CGFloat) -> some View {
+        let rawX = (win.currentFrame.origin.x - axRect.origin.x) / axRect.width
+        let rawY = (win.currentFrame.origin.y - axRect.origin.y) / axRect.height
+        let rawW = win.currentFrame.width / axRect.width
+        let rawH = win.currentFrame.height / axRect.height
+
+        let relX = max(0, min(0.95, rawX))
+        let relY = max(0, min(0.95, rawY))
+        let relW = max(0.08, min(1.0 - relX, rawW))
+        let relH = max(0.08, min(1.0 - relY, rawH))
+
+        let boxX = relX * canvasW
+        let boxY = relY * canvasH
+        let boxW = relW * canvasW
+        let boxH = relH * canvasH
+
+        let isMaster = (index == 0)
+
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Circle().fill(Color.red.opacity(0.85)).frame(width: 5, height: 5)
+                Circle().fill(Color.orange.opacity(0.85)).frame(width: 5, height: 5)
+                Circle().fill(Color.green.opacity(0.85)).frame(width: 5, height: 5)
+
+                Text(win.appName)
+                    .font(.system(size: 9, weight: .bold))
+                    .lineLimit(1)
+
+                Spacer()
+
+                if win.isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(.orange)
+                } else if isMaster {
+                    Text("★ MASTER")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 3).padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.35))
+                        .foregroundColor(.cyan)
+                        .cornerRadius(2)
+                }
+            }
+
+            if boxH > 35 && !win.title.isEmpty {
+                Text(win.title)
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(4)
+        .frame(width: boxW, height: boxH)
+        .background(
+            isMaster
+                ? Color.cyan.opacity(0.32)
+                : Color(NSColor.controlAccentColor).opacity(0.20)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(
+                    win.isLocked
+                        ? Color.orange.opacity(0.85)
+                        : (isMaster ? Color.cyan.opacity(0.85) : Color.primary.opacity(0.25)),
+                    lineWidth: isMaster ? 1.5 : 1
+                )
+        )
+        .cornerRadius(4)
+        .offset(x: boxX, y: boxY)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            onSetMasterAndRearrange(win.id, win.appName)
+        }
     }
 }
 
@@ -350,7 +380,7 @@ struct SettingsView: View {
     init(tabName: String? = nil) {
         let tab: Int
         switch tabName?.lowercased() {
-        case "space", "grid", "0": tab = 0
+        case "grid", "live", "space", "0": tab = 0
         case "shortcuts", "hotkeys", "1": tab = 1
         case "scoring", "scores", "weights", "apps", "2": tab = 2
         case "daemon", "logs", "3": tab = 3
@@ -366,9 +396,7 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             // Header Bar
             HStack(spacing: 14) {
-                AnimatedTileVisualizer()
-                    .frame(width: 58, height: 44)
-                    .shadow(color: .cyan.opacity(0.35), radius: 4, x: 0, y: 2)
+                AnimatedTileVisualizer(width: 58, height: 32.6)
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -435,31 +463,38 @@ struct SettingsView: View {
 
             // Accessibility Warning Banner (Dismisses as soon as granted)
             if !isAccessibilityGranted {
-                HStack(spacing: 12) {
-                    Image(systemName: "hand.raised.fill")
-                        .foregroundColor(.red)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Accessibility Permission Missing")
-                            .font(.subheadline.bold())
-                        Text("Enable SpaceTile in macOS System Settings -> Privacy & Security -> Accessibility.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button("Open System Settings") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                            NSWorkspace.shared.open(url)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "hand.raised.fill")
+                            .font(.title3)
+                            .foregroundColor(.red)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Accessibility Permission Required")
+                                .font(.subheadline.bold())
+                            Text("SpaceTile needs Accessibility access in macOS System Settings -> Privacy & Security -> Accessibility to arrange windows.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
-                        _ = WindowManager.ensureAccessibility(prompt: true)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.blue)
+                        Spacer()
 
-                    Button("Restart Daemon") {
-                        showStatus("Restarting daemon...")
-                        ServiceInstaller.restartAndReopenSettings(targetTab: "daemon")
+                        Button("Open System Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                            _ = WindowManager.isAccessibilityGranted(prompt: true)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+
+                        Button("Reveal SpaceTile in Finder") {
+                            NSWorkspace.shared.selectFile("/Users/guppi/Applications/SpaceTile.app", inFileViewerRootedAtPath: "/Users/guppi/Applications")
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
+
+                    Text("💡 If 'spacetile' (CLI) is toggled on, please also toggle or drag 'SpaceTile.app' into the list.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -468,10 +503,10 @@ struct SettingsView: View {
 
             Divider()
 
-            // Segmented Tabs (5 Views matching Stitch)
+            // Segmented Tabs
             Picker("", selection: $selectedTab) {
-                Text("Active Space & Live Grid").tag(0)
-                Text("Shortcuts & Grid").tag(1)
+                Text("Live Grid").tag(0)
+                Text("Shortcuts & Spacing").tag(1)
                 Text("Window Scores (1-100)").tag(2)
                 Text("Daemon & Logs").tag(3)
                 Text("About SpaceTile").tag(4)
@@ -484,7 +519,7 @@ struct SettingsView: View {
             // Content Area (Fixed Height, Fits Cleanly without Scrolling)
             VStack {
                 switch selectedTab {
-                case 0: activeSpaceTab
+                case 0: liveGridTab
                 case 1: shortcutsTab
                 case 2: windowScoresTab
                 case 3: daemonTab
@@ -542,6 +577,11 @@ struct SettingsView: View {
             checkStatus()
             refreshData()
         }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                refreshData()
+            }
+        }
         .onReceive(DistributedNotificationCenter.default().publisher(for: NSNotification.Name("com.apple.accessibility.api"))) { _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 checkStatus()
@@ -553,13 +593,25 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Tab 0: Active Space & Live Grid Matrix (from Stitch)
-    var activeSpaceTab: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LiveMatrixVisualizer(windows: currentWindows)
+    // MARK: - Tab 0: Live Grid (True Usable Aspect Ratio, Grid Spanning, Semi-Transparent, Double-Click Master)
+    var liveGridTab: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LiveGridView(
+                windows: currentWindows,
+                onSetMasterAndRearrange: { winID, appName in
+                    WindowManager.shared.optimize(verbose: true, forcedMasterID: winID)
+                    refreshData()
+                    showStatus("Promoted '\(appName)' to Master & rearranged.")
+                },
+                onToggleLock: { winID in
+                    let isLocked = WindowManager.shared.lockedWindowIDs.contains(winID)
+                    WindowManager.shared.setWindowLocked(id: winID, locked: !isLocked)
+                    refreshData()
+                }
+            )
 
             HStack {
-                Text("Recognized Windows on Active Space (\(currentWindows.count)):")
+                Text("Recognized Windows on Current Space (\(currentWindows.count)):")
                     .font(.subheadline.bold())
                 Spacer()
                 Button(action: refreshData) {
@@ -570,18 +622,15 @@ struct SettingsView: View {
             .padding(.top, 2)
 
             if currentWindows.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "desktopcomputer")
-                        .font(.system(size: 24))
-                        .foregroundColor(.secondary)
-                    Text("No manageable application windows detected on this Space.")
+                VStack(spacing: 4) {
+                    Text("No manageable windows detected.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 16)
+                .padding(.vertical, 8)
             } else {
-                VStack(spacing: 6) {
+                VStack(spacing: 5) {
                     ForEach(Array(currentWindows.prefix(4).enumerated()), id: \.element.id) { index, win in
                         activeWindowRow(index: index, win: win)
                     }
@@ -636,17 +685,23 @@ struct SettingsView: View {
                 .tint(.cyan)
             }
         }
-        .padding(7)
+        .padding(6)
         .background(Color.secondary.opacity(index == 0 ? 0.12 : 0.05))
-        .cornerRadius(7)
+        .cornerRadius(6)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id)
+            refreshData()
+            showStatus("Promoted '\(win.appName)' to Master & rearranged.")
+        }
     }
 
-    // MARK: - Tab 1: Shortcuts & Grid (with multi-step smoothness & content freeze)
+    // MARK: - Tab 1: Shortcuts & Spacing (with multi-step smoothness & content freeze)
     var shortcutsTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             GroupBox(label: Label("Global Hotkeys (Record New)", systemImage: "keyboard")) {
                 VStack(spacing: 6) {
-                    shortcutRow(title: "Rearrange Windows", desc: "Tiles all windows into the dynamic 10x6 grid", shortcut: config.shortcut, field: "optimize")
+                    shortcutRow(title: "Rearrange Windows", desc: "Tiles all windows into the dynamic grid", shortcut: config.shortcut, field: "optimize")
                     Divider()
                     shortcutRow(title: "Set Window as Master", desc: "Promotes focused window to master slot", shortcut: config.masterShortcut, field: "master")
                     Divider()
@@ -744,14 +799,14 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Tab 2: Window Scores (1-100) & Appetite (from Stitch)
+    // MARK: - Tab 2: Window Scores (1-100) & Appetite
     var windowScoresTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Window Appetite Scores (1 - 100)")
                         .font(.headline)
-                    Text("Higher scores reserve more columns on the 10x6 grid. Terminals are kept focused (~32 score, max 1024px width), while Browsers & IDEs expand (~70-75 score).")
+                    Text("Higher scores reserve more columns on the grid. Terminals stay focused (~32 score, max 1024px width), while Browsers & IDEs expand (~70-75 score).")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 Spacer()
@@ -838,7 +893,7 @@ struct SettingsView: View {
         .cornerRadius(8)
     }
 
-    // MARK: - Tab 3: Daemon & Real-time Logs (from Stitch)
+    // MARK: - Tab 3: Daemon & Real-time Logs
     var daemonTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             GroupBox(label: Label("macOS System Permissions", systemImage: "hand.raised.fill")) {
@@ -861,7 +916,12 @@ struct SettingsView: View {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                             NSWorkspace.shared.open(url)
                         }
-                        _ = WindowManager.ensureAccessibility(prompt: true)
+                        _ = WindowManager.isAccessibilityGranted(prompt: true)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.selectFile("/Users/guppi/Applications/SpaceTile.app", inFileViewerRootedAtPath: "/Users/guppi/Applications")
                     }
                     .buttonStyle(.bordered)
 
@@ -923,7 +983,7 @@ struct SettingsView: View {
                 .padding(5)
             }
 
-            // Real-time macOS Terminal Log Frame (from Stitch)
+            // Real-time macOS Terminal Log Frame
             VStack(spacing: 0) {
                 HStack {
                     HStack(spacing: 6) {
@@ -990,16 +1050,13 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Tab 4: About SpaceTile (with telemetry badges & coffee)
+    // MARK: - Tab 4: About SpaceTile (with 16:9 visualizer, telemetry badges & coffee)
     var aboutTab: some View {
         VStack(spacing: 14) {
             Spacer().frame(height: 4)
 
             HStack(spacing: 20) {
-                AnimatedTileVisualizer()
-                    .scaleEffect(1.2)
-                    .frame(width: 95, height: 72)
-                    .shadow(color: .cyan.opacity(0.35), radius: 6, x: 0, y: 3)
+                AnimatedTileVisualizer(width: 88, height: 49.5)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
@@ -1013,7 +1070,7 @@ struct SettingsView: View {
                                 .cornerRadius(5)
                         }
                     }
-                    Text("Version 1.3.0 (macOS Native)")
+                    Text("Version 1.4.0 (macOS Native)")
                         .font(.subheadline).foregroundColor(.secondary)
                     Text("Grid-based ergonomic window allocation for macOS.")
                         .font(.caption).foregroundColor(.secondary)
@@ -1023,7 +1080,7 @@ struct SettingsView: View {
             .background(Color.secondary.opacity(0.06))
             .cornerRadius(12)
 
-            // Telemetry Badges (from Stitch)
+            // Telemetry Badges
             HStack(spacing: 16) {
                 telemetryCard(title: "Core Engine", val: "Swift 5.9", icon: "cpu")
                 telemetryCard(title: "IPC Latency", val: "< 20ms", icon: "bolt.fill")
@@ -1149,12 +1206,11 @@ struct SettingsView: View {
 
     func refreshData() {
         checkStatus()
-        if let primary = NSScreen.main {
-            let vf = primary.visibleFrame
-            let h = NSScreen.screens.first?.frame.height ?? 0
-            let axRect = CGRect(x: vf.origin.x, y: h - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
-            currentWindows = WindowManager.shared.collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps), config: config)
-        }
+        let screen = NSScreen.main ?? NSScreen.screens.first!
+        let vf = screen.visibleFrame
+        let primaryH = NSScreen.screens.first?.frame.height ?? 0
+        let axRect = CGRect(x: vf.origin.x, y: primaryH - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
+        currentWindows = WindowManager.shared.collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps), config: config)
     }
 
     func triggerOptimizeNow() {

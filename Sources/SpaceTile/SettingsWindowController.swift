@@ -33,6 +33,7 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             win.contentViewController = hostingController
             win.isReleasedWhenClosed = false
             win.level = .floating // Stays on top when invoked
+            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary] // Stays open and in place when switching spaces
             win.delegate = self
 
             if let icon = SettingsView.loadAppIcon() {

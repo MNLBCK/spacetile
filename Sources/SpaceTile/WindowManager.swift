@@ -6,7 +6,7 @@ import CoreGraphics
 func _AXUIElementGetWindow(_ element: AXUIElement, _ id: inout CGWindowID) -> AXError
 
 struct ManagedWindow {
-    let element: AXUIElement
+    let element: AXUIElement?
     let id: CGWindowID
     let appName: String
     let title: String
@@ -43,19 +43,20 @@ class WindowManager {
         if isAccessibilityGranted(prompt: false) {
             return true
         }
-        // Direct probe 1: frontmost app window attribute
-        if let front = NSWorkspace.shared.frontmostApplication {
-            let appRef = AXUIElementCreateApplication(front.processIdentifier)
-            var winRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &winRef) == .success {
-                return true
+        // Direct probe against an EXTERNAL application (never ourselves!)
+        let myPid = NSRunningApplication.current.processIdentifier
+        for app in NSWorkspace.shared.runningApplications {
+            if app.processIdentifier != myPid && app.activationPolicy == .regular {
+                let appRef = AXUIElementCreateApplication(app.processIdentifier)
+                var winRef: CFTypeRef?
+                let status = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &winRef)
+                if status == .success {
+                    return true
+                }
+                if status.rawValue == -25211 { // kAXErrorAPIDisabled
+                    return false
+                }
             }
-        }
-        // Direct probe 2: system-wide focused element
-        let sys = AXUIElementCreateSystemWide()
-        var focusedApp: CFTypeRef?
-        if AXUIElementCopyAttributeValue(sys, kAXFocusedApplicationAttribute as CFString, &focusedApp) == .success {
-            return true
         }
         return false
     }
@@ -159,7 +160,9 @@ class WindowManager {
             var moves: [(element: AXUIElement, start: CGRect, target: CGRect)] = []
             for (i, win) in windows.enumerated() {
                 if win.isLocked { continue }
-                moves.append((element: win.element, start: win.currentFrame, target: frames[i]))
+                if let elem = win.element {
+                    moves.append((element: elem, start: win.currentFrame, target: frames[i]))
+                }
             }
             animateWindowsSmooth(
                 moves: moves,
@@ -170,7 +173,9 @@ class WindowManager {
         } else {
             for (i, win) in windows.enumerated() {
                 if win.isLocked { continue }
-                setWindowFrameImmediate(win.element, target: frames[i])
+                if let elem = win.element {
+                    setWindowFrameImmediate(elem, target: frames[i])
+                }
             }
         }
 
@@ -572,10 +577,12 @@ class WindowManager {
             return []
         }
 
-        var onScreenMap: [CGWindowID: Int] = [:]
+        var onScreenMap: [CGWindowID: (order: Int, owner: String, title: String, bounds: CGRect)] = [:]
         for (order, win) in cgWindows.enumerated() {
             let layer = win[kCGWindowLayer as String] as? Int ?? -1
             let id = win[kCGWindowNumber as String] as? CGWindowID ?? 0
+            let owner = win[kCGWindowOwnerName as String] as? String ?? ""
+            let name = win[kCGWindowName as String] as? String ?? ""
             let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
             let w = bounds["Width"] as? Double ?? 0
             let h = bounds["Height"] as? Double ?? 0
@@ -584,7 +591,9 @@ class WindowManager {
             let rect = CGRect(x: x, y: y, width: w, height: h)
 
             if layer == 0 && w >= 150 && h >= 150 && rect.intersects(screenBounds) {
-                onScreenMap[id] = order
+                if !ignoredApps.contains(owner) && owner != "SpaceTile" {
+                    onScreenMap[id] = (order: order, owner: owner, title: name, bounds: rect)
+                }
             }
         }
 
@@ -602,10 +611,11 @@ class WindowManager {
         }
 
         var managed: [ManagedWindow] = []
+        var matchedIDs = Set<CGWindowID>()
 
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             let appName = app.localizedName ?? ""
-            if ignoredApps.contains(appName) { continue }
+            if ignoredApps.contains(appName) || appName == "SpaceTile" { continue }
 
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
             var winsRef: CFTypeRef?
@@ -615,9 +625,11 @@ class WindowManager {
             for win in wins {
                 var winID: CGWindowID = 0
                 guard _AXUIElementGetWindow(win, &winID) == .success,
-                      let zOrder = onScreenMap[winID] else {
+                      let info = onScreenMap[winID] else {
                     continue
                 }
+
+                matchedIDs.insert(winID)
 
                 var minRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef) == .success,
@@ -627,11 +639,11 @@ class WindowManager {
 
                 var titleRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                let title = titleRef as? String ?? ""
+                let title = (titleRef as? String)?.isEmpty == false ? (titleRef as! String) : info.title
 
                 let isFocused = (winID == focusedWindowID)
                 let isLocked = lockedWindowIDs.contains(winID)
-                let currentFrame = getWindowFrame(win) ?? CGRect.zero
+                let currentFrame = getWindowFrame(win) ?? info.bounds
 
                 // Scoring lookup
                 let weightConfig = config.appWeights.first(where: { $0.appName.lowercased() == appName.lowercased() })
@@ -646,9 +658,35 @@ class WindowManager {
                     appName: appName,
                     title: title,
                     isFocused: isFocused,
-                    zOrder: zOrder,
+                    zOrder: info.order,
                     isLocked: isLocked,
                     currentFrame: currentFrame,
+                    score: score,
+                    minWidth: minW,
+                    minHeight: minH,
+                    maxWidth: maxW
+                ))
+            }
+        }
+
+        // Add any remaining on-screen windows that weren't matched via AX
+        for (winID, info) in onScreenMap {
+            if !matchedIDs.contains(winID) {
+                let weightConfig = config.appWeights.first(where: { $0.appName.lowercased() == info.owner.lowercased() })
+                let score = weightConfig?.score ?? defaultScoreFor(appName: info.owner)
+                let minW = weightConfig?.minWidth ?? 450
+                let minH = weightConfig?.minHeight ?? 350
+                let maxW = weightConfig?.maxWidth
+
+                managed.append(ManagedWindow(
+                    element: nil,
+                    id: winID,
+                    appName: info.owner,
+                    title: info.title,
+                    isFocused: (winID == focusedWindowID),
+                    zOrder: info.order,
+                    isLocked: lockedWindowIDs.contains(winID),
+                    currentFrame: info.bounds,
                     score: score,
                     minWidth: minW,
                     minHeight: minH,
