@@ -13,29 +13,31 @@ struct ServiceInstaller {
         return home.appendingPathComponent(".local/bin/spacetile")
     }
 
+    static var logFileURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent("Library/Logs/SpaceTile/stdout.log")
+    }
+
     static func install() {
         let fileManager = FileManager.default
         let currentExecutable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
 
-        // Ensure ~/.local/bin exists
         let binDir = binaryDestination.deletingLastPathComponent()
         try? fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
 
-        // Copy executable if not already in place
         do {
             if currentExecutable.standardized.path != binaryDestination.standardized.path {
                 if fileManager.fileExists(atPath: binaryDestination.path) {
                     try fileManager.removeItem(at: binaryDestination)
                 }
                 try fileManager.copyItem(at: currentExecutable, to: binaryDestination)
-                print("[\u{001B}[32mOK\u{001B}[0m] Binary installiert nach: \(binaryDestination.path)")
+                print("[\u{001B}[32mOK\u{001B}[0m] Installed binary to: \(binaryDestination.path)")
             }
         } catch {
-            print("[\u{001B}[31mFEHLER\u{001B}[0m] Konnte Binary nicht kopieren: \(error)")
+            print("[\u{001B}[31mERROR\u{001B}[0m] Could not copy binary: \(error)")
             return
         }
 
-        // Generate LaunchAgent Plist
         let home = fileManager.homeDirectoryForCurrentUser.path
         let logDir = "\(home)/Library/Logs/SpaceTile"
         try? fileManager.createDirectory(atPath: logDir, withIntermediateDirectories: true, attributes: nil)
@@ -71,79 +73,71 @@ struct ServiceInstaller {
 
         do {
             try plistContent.write(to: plistURL, atomically: true, encoding: .utf8)
-            print("[\u{001B}[32mOK\u{001B}[0m] LaunchAgent erstellt unter: \(plistURL.path)")
+            print("[\u{001B}[32mOK\u{001B}[0m] LaunchAgent written to: \(plistURL.path)")
         } catch {
-            print("[\u{001B}[31mFEHLER\u{001B}[0m] Konnte Plist nicht schreiben: \(error)")
+            print("[\u{001B}[31mERROR\u{001B}[0m] Could not write plist: \(error)")
             return
         }
 
-        // Unload existing service if already running
-        let unloadProc = Process()
-        unloadProc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        unloadProc.arguments = ["unload", plistURL.path]
-        try? unloadProc.run()
-        unloadProc.waitUntilExit()
-
-        // Load via launchctl
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["load", "-w", plistURL.path]
-        try? process.run()
-        process.waitUntilExit()
-
-        print("[\u{001B}[32mERFOLG\u{001B}[0m] SpaceTile Daemon wurde gestartet und startet künftig automatisch beim Mac-Start!")
-        print("Tipp: Logs findest du unter: ~/Library/Logs/SpaceTile/stdout.log")
-    }
-
-    static func restart() {
-        let unloadProc = Process()
-        unloadProc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        unloadProc.arguments = ["unload", plistURL.path]
-        try? unloadProc.run()
-        unloadProc.waitUntilExit()
-
-        usleep(300_000)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["load", "-w", plistURL.path]
-        try? process.run()
-        process.waitUntilExit()
-        print("[\u{001B}[32mOK\u{001B}[0m] SpaceTile Daemon neu gestartet.")
+        restart()
+        print("[\u{001B}[32mSUCCESS\u{001B}[0m] SpaceTile Daemon is running and registered for login auto-start!")
     }
 
     static func uninstall() {
+        stop()
         let fileManager = FileManager.default
-
-        // Unload
         if fileManager.fileExists(atPath: plistURL.path) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = ["unload", plistURL.path]
-            try? process.run()
-            process.waitUntilExit()
-
             try? fileManager.removeItem(at: plistURL)
-            print("[\u{001B}[32mOK\u{001B}[0m] LaunchAgent entfernt.")
         }
-
         if fileManager.fileExists(atPath: binaryDestination.path) {
             try? fileManager.removeItem(at: binaryDestination)
-            print("[\u{001B}[32mOK\u{001B}[0m] Binary entfernt: \(binaryDestination.path)")
         }
-
-        print("[\u{001B}[32mERFOLG\u{001B}[0m] SpaceTile Daemon wurde sauber deinstalliert.")
+        print("[\u{001B}[32mOK\u{001B}[0m] Uninstalled SpaceTile service.")
     }
 
     static func status() {
-        let fileManager = FileManager.default
-        let plistExists = fileManager.fileExists(atPath: plistURL.path)
-        let binExists = fileManager.fileExists(atPath: binaryDestination.path)
-
+        let info = statusInfo()
         print("SpaceTile Status:")
-        print(" - Binary: \(binExists ? "Installiert (\(binaryDestination.path))" : "Nicht installiert")")
-        print(" - LaunchAgent Plist: \(plistExists ? "Vorhanden" : "Nicht vorhanden")")
+        print(" - Binary: \(FileManager.default.fileExists(atPath: binaryDestination.path) ? "Installed" : "Not installed")")
+        print(" - LaunchAgent: \(FileManager.default.fileExists(atPath: plistURL.path) ? "Registered" : "Missing")")
+        if info.isRunning {
+            print(" - Service: \u{001B}[32mActive\u{001B}[0m (PID: \(info.pid ?? 0))")
+        } else {
+            print(" - Service: \u{001B}[33mStopped\u{001B}[0m")
+        }
+    }
 
+    static func start() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["load", "-w", plistURL.path]
+        try? process.run()
+        process.waitUntilExit()
+    }
+
+    static func stop() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["unload", plistURL.path]
+        try? process.run()
+        process.waitUntilExit()
+    }
+
+    static func restart() {
+        let uid = getuid()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["kickstart", "-k", "gui/\(uid)/\(label)"]
+        try? process.run()
+        process.waitUntilExit()
+
+        if process.terminationStatus != 0 {
+            // Fallback to reload if not already loaded
+            start()
+        }
+    }
+
+    static func statusInfo() -> (isRunning: Bool, pid: Int?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = ["list"]
@@ -153,10 +147,26 @@ struct ServiceInstaller {
         process.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8), output.contains(label) {
-            print(" - Dienst-Status: \u{001B}[32mAktiv (läuft im Hintergrund)\u{001B}[0m")
-        } else {
-            print(" - Dienst-Status: \u{001B}[33mInaktiv / Nicht geladen\u{001B}[0m")
+        guard let output = String(data: data, encoding: .utf8) else { return (false, nil) }
+
+        for line in output.components(separatedBy: "\n") {
+            if line.contains(label) {
+                let parts = line.split(whereSeparator: { $0.isWhitespace })
+                if let first = parts.first, let pid = Int(first) {
+                    return (true, pid)
+                }
+                return (true, nil)
+            }
         }
+        return (false, nil)
+    }
+
+    static func getRecentLogs(maxLines: Int = 20) -> [String] {
+        guard let data = try? Data(contentsOf: logFileURL),
+              let content = String(data: data, encoding: .utf8) else {
+            return ["No logs available yet."]
+        }
+        let lines = content.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return Array(lines.suffix(maxLines))
     }
 }

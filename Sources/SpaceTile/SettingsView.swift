@@ -2,18 +2,18 @@ import SwiftUI
 import Combine
 import ApplicationServices
 
-// MARK: - Animated 6-Window Visualizer (2/3 Master + 3 Right Stack + 2 Bottom Stack)
+// MARK: - Animated Visualizer (Preserving Signature Gray Tiles + Morphing Animation)
 struct AnimatedTileVisualizer: View {
     @State private var layoutStep = 0
-    let timer = Timer.publish(every: 3.0, on: .main, in: .common).autoconnect()
+    let timer = Timer.publish(every: 2.8, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(NSColor.controlBackgroundColor).opacity(0.8))
+                .fill(Color(NSColor.controlBackgroundColor).opacity(0.85))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.cyan.opacity(0.35), lineWidth: 1.5)
+                        .stroke(Color.cyan.opacity(0.4), lineWidth: 1.5)
                 )
 
             GeometryReader { geo in
@@ -29,7 +29,7 @@ struct AnimatedTileVisualizer: View {
                 let cellH = (innerH - 2 * gap) / 3.0
 
                 // Mode 0: 6-Window Signature Layout (2/3 Top-Left Master, 3 Right, 2 Bottom)
-                // Mode 1: Side-by-Side (50/50)
+                // Mode 1: 50/50 Side-by-Side
                 // Mode 2: Master-Stack (62/38)
                 let mode = layoutStep % 3
 
@@ -96,7 +96,7 @@ struct AnimatedTileVisualizer: View {
                 }()
 
                 ZStack(alignment: .topLeading) {
-                    // Master
+                    // Master Cyan Window
                     RoundedRectangle(cornerRadius: 6)
                         .fill(
                             LinearGradient(
@@ -107,29 +107,25 @@ struct AnimatedTileVisualizer: View {
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                                .stroke(Color.white.opacity(0.5), lineWidth: 1.2)
                         )
-                        .frame(width: masterFrame.width, height: masterFrame.height)
+                        .frame(width: max(0, masterFrame.width), height: max(0, masterFrame.height))
                         .offset(x: masterFrame.origin.x, y: masterFrame.origin.y)
                         .shadow(color: .cyan.opacity(0.4), radius: 4)
 
-                    // Right 1
-                    tileView(frame: r1Frame)
-                    // Right 2
-                    tileView(frame: r2Frame)
-                    // Right 3
-                    if mode != 1 { tileView(frame: r3Frame) }
-
-                    // Bottom 1 & 2 (Signature layout)
+                    // Secondary Gray / Frosted Windows
+                    grayTile(frame: r1Frame)
+                    grayTile(frame: r2Frame)
+                    if mode != 1 { grayTile(frame: r3Frame) }
                     if mode == 0 {
-                        tileView(frame: b1Frame)
-                        tileView(frame: b2Frame)
+                        grayTile(frame: b1Frame)
+                        grayTile(frame: b2Frame)
                     }
                 }
-                .animation(.spring(response: 0.6, dampingFraction: 0.72), value: layoutStep)
+                .animation(.spring(response: 0.55, dampingFraction: 0.72), value: layoutStep)
             }
         }
-        .frame(width: 84, height: 60)
+        .frame(width: 86, height: 62)
         .onReceive(timer) { _ in
             layoutStep += 1
         }
@@ -138,34 +134,35 @@ struct AnimatedTileVisualizer: View {
         }
     }
 
-    private func tileView(frame: CGRect) -> some View {
+    private func grayTile(frame: CGRect) -> some View {
         RoundedRectangle(cornerRadius: 4)
-            .fill(Color.white.opacity(0.24))
+            .fill(Color(NSColor.textColor).opacity(0.18))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                    .stroke(Color(NSColor.textColor).opacity(0.35), lineWidth: 1)
             )
             .frame(width: max(0, frame.width), height: max(0, frame.height))
             .offset(x: frame.origin.x, y: frame.origin.y)
     }
 }
 
-// MARK: - Main Settings View (English, Compact, No-Scroll)
+// MARK: - Main Settings View
 struct SettingsView: View {
     @State private var config: Config = Config.load()
-    @State private var memory: [SpaceProfile] = SpaceMemory.shared.profiles
     @State private var statusMessage: String?
     @State private var currentWindows: [ManagedWindow] = []
     @State private var selectedTab: Int = 0
     @State private var recordingField: String? = nil
     @State private var isAccessibilityGranted: Bool = AXIsProcessTrusted()
+    @State private var daemonStatus: (isRunning: Bool, pid: Int?) = ServiceInstaller.statusInfo()
+    @State private var recentLogs: [String] = ServiceInstaller.getRecentLogs()
     @State private var localEventMonitor: Any? = nil
 
     let pollTimer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Header Bar
             HStack(spacing: 16) {
                 AnimatedTileVisualizer()
 
@@ -173,21 +170,19 @@ struct SettingsView: View {
                     HStack(spacing: 8) {
                         Text("SpaceTile")
                             .font(.title2.bold())
+
                         if !isAccessibilityGranted {
                             Text("Permission Required")
                                 .font(.caption2.bold())
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.red)
-                                .cornerRadius(4)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.red).cornerRadius(4)
                         } else {
-                            Text("Active")
+                            Text(daemonStatus.isRunning ? "Daemon Active" : "Daemon Stopped")
                                 .font(.caption2.bold())
-                                .foregroundColor(.green)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.green.opacity(0.15))
+                                .foregroundColor(daemonStatus.isRunning ? .green : .orange)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background((daemonStatus.isRunning ? Color.green : Color.orange).opacity(0.15))
                                 .cornerRadius(4)
                         }
                     }
@@ -203,49 +198,44 @@ struct SettingsView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
                         Text("Rearrange Now")
-                            .fontWeight(.semibold)
+                            .fontWeight(.bold)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.cyan)
 
-                // Close Button
+                // Distinct Close Button
                 Button(action: { SettingsWindowController.shared.close() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
+                    Label("Close", systemImage: "xmark")
+                        .font(.callout.bold())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
                 }
-                .buttonStyle(.plain)
-                .padding(.leading, 6)
+                .buttonStyle(.bordered)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
-            .background(Color(NSColor.windowBackgroundColor).opacity(0.7))
+            .background(Color(NSColor.windowBackgroundColor).opacity(0.75))
 
-            // Accessibility Warning Banner
+            // Accessibility Warning Banner (Dismisses as soon as granted)
             if !isAccessibilityGranted {
                 HStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.yellow)
-                        .font(.body)
-
-                    Text("Accessibility permission needed. If toggled ON, click 'Restart Daemon' to apply.")
+                    Text("Accessibility permission granted in macOS? Click 'Restart Daemon' to apply.")
                         .font(.caption)
-
                     Spacer()
-
                     Button("Open System Settings") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                             NSWorkspace.shared.open(url)
                         }
                         _ = WindowManager.ensureAccessibility(prompt: true)
                     }
-                    .buttonStyle(.bordered)
-
                     Button("Restart Daemon") {
-                        restartDaemonAction()
+                        ServiceInstaller.restart()
+                        checkStatus()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
@@ -259,10 +249,10 @@ struct SettingsView: View {
 
             // Segmented Tabs
             Picker("", selection: $selectedTab) {
-                Text("Shortcuts & Animation").tag(0)
-                Text("Smart Weights").tag(1)
+                Text("Shortcuts & Grid").tag(0)
+                Text("Window Scores (1-100)").tag(1)
                 Text("Active Space & Master").tag(2)
-                Text("Space Memory (AI)").tag(3)
+                Text("Daemon & Logs").tag(3)
                 Text("About").tag(4)
             }
             .pickerStyle(.segmented)
@@ -270,13 +260,13 @@ struct SettingsView: View {
             .padding(.top, 10)
             .padding(.bottom, 6)
 
-            // Tab Content (Fixed Height, No Scrolling)
+            // Content Area (Fixed Height, No Scrolling Needed)
             VStack {
                 switch selectedTab {
                 case 0: shortcutsTab
-                case 1: smartWeightsTab
+                case 1: windowScoresTab
                 case 2: activeSpaceTab
-                case 3: spaceMemoryTab
+                case 3: daemonTab
                 case 4: aboutTab
                 default: EmptyView()
                 }
@@ -287,7 +277,7 @@ struct SettingsView: View {
 
             Divider()
 
-            // Footer
+            // Footer (No Restart Button here, moved to Daemon tab)
             HStack(spacing: 12) {
                 if let msg = statusMessage {
                     Text(msg)
@@ -296,10 +286,6 @@ struct SettingsView: View {
                 }
 
                 Spacer()
-
-                Button("Restart Daemon") {
-                    restartDaemonAction()
-                }
 
                 Button("Reset Defaults") {
                     config = Config.default
@@ -314,98 +300,45 @@ struct SettingsView: View {
                     showStatus("Settings saved successfully.")
                 }
                 .keyboardShortcut(.defaultAction)
+
+                Button("Close") {
+                    SettingsWindowController.shared.close()
+                }
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
             .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
         }
-        .frame(width: 840, height: 580)
+        .frame(width: 860, height: 600)
         .onAppear {
             refreshData()
-            checkAccessibility()
+            checkStatus()
         }
         .onReceive(pollTimer) { _ in
-            checkAccessibility()
+            checkStatus()
         }
         .onDisappear {
             stopRecording()
         }
     }
 
-    // MARK: - Tab 0: Shortcuts & Animation
+    // MARK: - Tab 0: Shortcuts & Grid
     var shortcutsTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            GroupBox(label: Label("Global Hotkeys", systemImage: "keyboard")) {
-                VStack(spacing: 10) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Rearrange Windows")
-                                .fontWeight(.medium)
-                            Text("Rearranges on-screen windows in active Space.")
-                                .font(.caption).foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if recordingField == "optimize" {
-                            Button("Press Keys on Keyboard...") { stopRecording() }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.orange)
-                        } else {
-                            Text(config.shortcut.displayString)
-                                .padding(.horizontal, 10).padding(.vertical, 4)
-                                .background(Color.secondary.opacity(0.12))
-                                .cornerRadius(6)
-                                .font(.system(.body, design: .monospaced))
-
-                            Button("Record New") { startRecording(field: "optimize") }
-                        }
-                    }
-
+        VStack(alignment: .leading, spacing: 12) {
+            GroupBox(label: Label("Global Hotkeys (Record New)", systemImage: "keyboard")) {
+                VStack(spacing: 8) {
+                    shortcutRow(title: "Rearrange Windows", desc: "Tiles all windows into the dynamic grid", shortcut: config.shortcut, field: "optimize")
                     Divider()
-
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Open Settings Window")
-                                .fontWeight(.medium)
-                            Text("Brings up this configuration panel.")
-                                .font(.caption).foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if recordingField == "gui" {
-                            Button("Press Keys on Keyboard...") { stopRecording() }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.orange)
-                        } else {
-                            Text(config.guiShortcut.displayString)
-                                .padding(.horizontal, 10).padding(.vertical, 4)
-                                .background(Color.secondary.opacity(0.12))
-                                .cornerRadius(6)
-                                .font(.system(.body, design: .monospaced))
-
-                            Button("Record New") { startRecording(field: "gui") }
-                        }
-                    }
+                    shortcutRow(title: "Set Window as Master", desc: "Promotes focused window to master slot", shortcut: config.masterShortcut, field: "master")
+                    Divider()
+                    shortcutRow(title: "Lock/Unlock Active Window", desc: "Locks window in place; reserves its grid tiles", shortcut: config.lockShortcut, field: "lock")
+                    Divider()
+                    shortcutRow(title: "Open Settings GUI", desc: "Opens this configuration window", shortcut: config.guiShortcut, field: "gui")
                 }
-                .padding(8)
+                .padding(6)
             }
 
-            GroupBox(label: Label("Window Animation", systemImage: "wand.and.stars")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Animate Window Repositioning Smoothly", isOn: $config.enableAnimations)
-                        .fontWeight(.medium)
-
-                    if config.enableAnimations {
-                        HStack {
-                            Text("Animation Duration:")
-                            Slider(value: $config.animationDuration, in: 0.10...0.60, step: 0.05)
-                            Text(String(format: "%.2f s", config.animationDuration))
-                                .frame(width: 50)
-                        }
-                    }
-                }
-                .padding(8)
-            }
-
-            GroupBox(label: Label("Spacing & Gaps", systemImage: "slider.horizontal.3")) {
+            GroupBox(label: Label("Grid & Window Sizing", systemImage: "square.grid.3x3")) {
                 HStack(spacing: 24) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -422,64 +355,97 @@ struct SettingsView: View {
                         }
                     }
                 }
-                .padding(8)
+                .padding(6)
             }
-        }
-    }
 
-    // MARK: - Tab 1: Smart Weights
-    var smartWeightsTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            GroupBox(label: Label("4K & Ultra-Wide Terminal Protection", systemImage: "terminal")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Enable Smart Window Constraints", isOn: $config.enableSmartWeighting)
-                        .fontWeight(.medium)
-
-                    Text("On 4K monitors (3840px), terminal windows are capped to readable line lengths instead of stretching 62% (~2380px) across the display.")
-                        .font(.caption).foregroundColor(.secondary)
-
-                    Divider()
-
-                    HStack(spacing: 24) {
-                        HStack {
-                            Text("Max Terminal Width:")
-                            Slider(value: $config.terminalMaxWidth4K, in: 700...1600, step: 50)
-                            Text("\(Int(config.terminalMaxWidth4K)) px").frame(width: 60)
-                        }
-                        HStack {
-                            Text("Max Ratio:")
-                            Slider(value: $config.terminalMaxRatio4K, in: 0.20...0.45, step: 0.01)
-                            Text("\(Int(config.terminalMaxRatio4K * 100))%").frame(width: 45)
-                        }
+            GroupBox(label: Label("Repositioning Speed", systemImage: "bolt.fill")) {
+                HStack(spacing: 20) {
+                    Picker("Mode:", selection: $config.animationMode) {
+                        Text("Instant (Zero-Lag Snap)").tag("instant")
+                        Text("Smooth (4-step glide)").tag("smooth")
                     }
-                }
-                .padding(8)
-            }
+                    .pickerStyle(.segmented)
+                    .frame(width: 320)
 
-            GroupBox(label: Label("Reading & Research Mode", systemImage: "book.pages")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Auto Side-by-Side (50/50) for Browser + Notes / Documentation", isOn: $config.sideBySideForNotesAndBrowser)
-                        .fontWeight(.medium)
-                    Text("When a browser is paired with a notes or markdown editor (Obsidian, Notes, Bear), both automatically split 50/50 for optimal reading & writing.")
+                    Text(config.animationMode == "instant" ? "Instant repositioning, 100% fluid, no IPC stutter." : "Lightweight glide interpolation.")
                         .font(.caption).foregroundColor(.secondary)
                 }
-                .padding(8)
-            }
-
-            GroupBox(label: Label("Single Window Behavior", systemImage: "rectangle")) {
-                Picker("When only one window is open:", selection: $config.singleWindowMode) {
-                    Text("Comfortable Centered Focus (75% width)").tag("centered")
-                    Text("Full Screen / Maximized").tag("maximized")
-                }
-                .pickerStyle(.radioGroup)
-                .padding(4)
+                .padding(6)
             }
         }
     }
 
-    // MARK: - Tab 2: Active Space & Master Selection
-    var activeSpaceTab: some View {
+    private func shortcutRow(title: String, desc: String, shortcut: ShortcutConfig, field: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).fontWeight(.medium)
+                Text(desc).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            if recordingField == field {
+                Button("Press Keys on Keyboard...") { stopRecording() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+            } else {
+                Text(shortcut.displayString)
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.12))
+                    .cornerRadius(6)
+                    .font(.system(.caption, design: .monospaced))
+
+                Button("Record New") { startRecording(field: field) }
+            }
+        }
+    }
+
+    // MARK: - Tab 1: Window Scores (1-100) & Constraints
+    var windowScoresTab: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text("Window Appetite Scores (1 - 100)")
+                .font(.headline)
+            Text("Higher scores claim more columns/tiles in the grid. Terminals are kept narrow (~30 score), while Browsers & IDEs claim wider space (~70-75 score).")
+                .font(.caption).foregroundColor(.secondary)
+
+            VStack(spacing: 8) {
+                scoreRow(app: "Terminal Apps (iTerm2, Terminal, Kitty)", category: "Terminal", score: 32, desc: "Capped to 3 cols on 10x6 4K grid (~1140px max width)")
+                Divider()
+                scoreRow(app: "Web Browsers (Chrome, Safari, Arc, Firefox)", category: "Browser", score: 72, desc: "Claims 6-7 cols on 10x6 grid (2300px+)")
+                Divider()
+                scoreRow(app: "Code Editors (VS Code, Xcode)", category: "Editor", score: 75, desc: "Generous code viewing width")
+                Divider()
+                scoreRow(app: "Notes & Docs (Obsidian, Notes, Bear)", category: "Notes", score: 50, desc: "Balanced reading column; 50/50 when paired with browser")
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.06))
+            .cornerRadius(8)
+
+            GroupBox(label: Label("Pairing Rules", systemImage: "book.pages")) {
+                Toggle("Auto Side-by-Side (50/50) when Browser is paired with Notes", isOn: $config.sideBySideForNotesAndBrowser)
+                    .fontWeight(.medium)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func scoreRow(app: String, category: String, score: Int, desc: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(app).fontWeight(.semibold)
+                Text(desc).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            Text("Score: \(score)")
+                .font(.caption.bold())
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(score > 60 ? Color.blue.opacity(0.15) : Color.orange.opacity(0.15))
+                .foregroundColor(score > 60 ? .blue : .orange)
+                .cornerRadius(6)
+        }
+    }
+
+    // MARK: - Tab 2: Active Space & Master Selection + Locking
+    var activeSpaceTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Windows in Current Space (\(currentWindows.count)):")
                     .font(.headline)
@@ -490,140 +456,139 @@ struct SettingsView: View {
             }
 
             if currentWindows.isEmpty {
-                Text("No manageable windows found in this Space.")
+                Text("No manageable windows found on this Space.")
                     .foregroundColor(.secondary)
                     .padding(.vertical, 20)
             } else {
                 VStack(spacing: 8) {
                     ForEach(Array(currentWindows.prefix(5).enumerated()), id: \.element.id) { index, win in
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(win.appName)
-                                        .fontWeight(.bold)
-                                    if index == 0 {
-                                        Text("★ Master")
-                                            .font(.caption2.bold())
-                                            .foregroundColor(.green)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 1)
-                                            .background(Color.green.opacity(0.15))
-                                            .cornerRadius(4)
-                                    } else {
-                                        Text("Stack \(index)")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                Text(win.title.isEmpty ? "(No title)" : win.title)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer()
-
-                            if index != 0 {
-                                Button("Set as Master") {
-                                    WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id)
-                                    refreshData()
-                                    showStatus("Set \(win.appName) as Master.")
-                                }
-                                .buttonStyle(.bordered)
-                            }
-
-                            Menu("Weight") {
-                                Button("Standard (62%)") {
-                                    WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id, forcedRatio: 0.62)
-                                    refreshData()
-                                }
-                                Button("Side-by-Side (50%)") {
-                                    WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id, forcedRatio: 0.50)
-                                    refreshData()
-                                }
-                                Button("Wide (75%)") {
-                                    WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id, forcedRatio: 0.75)
-                                    refreshData()
-                                }
-                                Button("Narrow (34% / Terminal)") {
-                                    WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id, forcedRatio: 0.34)
-                                    refreshData()
-                                }
-                            }
-                        }
-                        .padding(8)
-                        .background(Color.secondary.opacity(index == 0 ? 0.12 : 0.05))
-                        .cornerRadius(8)
+                        activeWindowRow(index: index, win: win)
                     }
                 }
             }
         }
     }
 
-    // MARK: - Tab 3: Space Memory
-    var spaceMemoryTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            GroupBox(label: Label("Background Learning Engine", systemImage: "brain.head.profile")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Observe and Learn User Habits per Space", isOn: $config.enableSpaceLearning)
-                        .fontWeight(.medium)
+    private func activeWindowRow(index: Int, win: ManagedWindow) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(win.appName).fontWeight(.bold)
+                    if win.isLocked {
+                        Text("🔒 Locked")
+                            .font(.caption2.bold())
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.15))
+                            .cornerRadius(4)
+                    } else if index == 0 {
+                        Text("★ Master")
+                            .font(.caption2.bold())
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Color.green.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                    Text("Score: \(win.score)").font(.caption2).foregroundColor(.secondary)
+                }
+                Text(win.title.isEmpty ? "(No title)" : win.title)
+                    .font(.caption).foregroundColor(.secondary).lineLimit(1)
+            }
 
-                    Text("SpaceTile silently observes manual window adjustments. When you work with app pairs (e.g. Chrome + iTerm2), it automatically remembers your preferred ratio.")
-                        .font(.caption).foregroundColor(.secondary)
+            Spacer()
 
-                    HStack {
-                        Button("Memorize Current Space Layout Now") {
-                            if let msg = SpaceObserver.shared.learnCurrentLayoutNow() {
-                                memory = SpaceMemory.shared.profiles
-                                showStatus(msg)
+            Button(win.isLocked ? "Unlock" : "Lock Position") {
+                WindowManager.shared.setWindowLocked(id: win.id, locked: !win.isLocked)
+                refreshData()
+            }
+            .buttonStyle(.bordered)
+
+            if index != 0 && !win.isLocked {
+                Button("Set as Master") {
+                    WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id)
+                    refreshData()
+                    showStatus("Set \(win.appName) as Master.")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
+            }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(index == 0 ? 0.12 : 0.05))
+        .cornerRadius(8)
+    }
+
+    // MARK: - Tab 3: Dedicated Daemon & Logs Tab
+    var daemonTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            GroupBox(label: Label("Background Service Control", systemImage: "gearshape.2.fill")) {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(daemonStatus.isRunning ? Color.green : Color.red)
+                                .frame(width: 10, height: 10)
+                            Text(daemonStatus.isRunning ? "Daemon is Running" : "Daemon is Stopped")
+                                .fontWeight(.bold)
+                            if let pid = daemonStatus.pid {
+                                Text("(PID: \(pid))").font(.caption).foregroundColor(.secondary)
                             }
                         }
-                        .buttonStyle(.borderedProminent)
+                        Text("Auto-starts at login via ~/Library/LaunchAgents/com.guppi.spacetile.plist")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
 
-                        Spacer()
+                    Spacer()
 
-                        Button("Clear Memory") {
-                            SpaceMemory.shared.clear()
-                            memory = []
-                            showStatus("Space memory cleared.")
+                    Button("Restart Daemon") {
+                        ServiceInstaller.restart()
+                        checkStatus()
+                        showStatus("Daemon restarted via launchctl kickstart.")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+
+                    if daemonStatus.isRunning {
+                        Button("Stop") {
+                            ServiceInstaller.stop()
+                            checkStatus()
                         }
                         .foregroundColor(.red)
+                    } else {
+                        Button("Start") {
+                            ServiceInstaller.start()
+                            checkStatus()
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                 }
                 .padding(8)
             }
 
-            Text("Learned Space Profiles (\(memory.count)):")
-                .font(.headline)
+            HStack {
+                Text("Recent Logs (~/Library/Logs/SpaceTile/stdout.log):")
+                    .font(.caption.bold())
+                Spacer()
+                Button("Refresh Logs") {
+                    recentLogs = ServiceInstaller.getRecentLogs()
+                }
+                .font(.caption)
+            }
 
-            if memory.isEmpty {
-                Text("No profiles learned yet. Click 'Memorize Current Space Layout' above or continue working normally.")
-                    .font(.caption).foregroundColor(.secondary)
-            } else {
-                VStack(spacing: 6) {
-                    ForEach(memory.prefix(3)) { prof in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(prof.apps.joined(separator: " + "))
-                                    .fontWeight(.semibold)
-                                Text("Resolution: \(prof.displayResolution) • Observations: \(prof.observationsCount)")
-                                    .font(.caption).foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            if let r = prof.learnedMasterRatio {
-                                Text("\(Int(r * 100))% Master")
-                                    .padding(.horizontal, 8).padding(.vertical, 3)
-                                    .background(Color.cyan.opacity(0.15))
-                                    .cornerRadius(6)
-                                    .foregroundColor(.cyan)
-                            }
-                        }
-                        .padding(8)
-                        .background(Color.secondary.opacity(0.06))
-                        .cornerRadius(6)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(recentLogs, id: \.self) { line in
+                        Text(line)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
             }
+            .frame(height: 180)
+            .background(Color.black.opacity(0.35))
+            .cornerRadius(8)
         }
     }
 
@@ -640,12 +605,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("SpaceTile")
                         .font(.title.bold())
-                    Text("Version 1.2.0 (macOS Native)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    Text("Designed for speed, ergonomics, and seamless multitasking.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text("Version 1.3.0 (macOS Native)")
+                        .font(.subheadline).foregroundColor(.secondary)
+                    Text("Grid-based ergonomic window allocation for macOS.")
+                        .font(.caption).foregroundColor(.secondary)
                 }
             }
             .padding()
@@ -654,8 +617,7 @@ struct SettingsView: View {
 
             VStack(spacing: 12) {
                 Text("SpaceTile is free and open source. Enjoying it?")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .font(.subheadline).foregroundColor(.secondary)
 
                 HStack(spacing: 16) {
                     Button(action: {
@@ -664,8 +626,7 @@ struct SettingsView: View {
                         }
                     }) {
                         Label("GitHub Repository", systemImage: "link")
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
                     }
 
                     Button(action: {
@@ -675,11 +636,9 @@ struct SettingsView: View {
                     }) {
                         HStack(spacing: 6) {
                             Text("☕")
-                            Text("Buy Me a Coffee")
-                                .fontWeight(.semibold)
+                            Text("Buy Me a Coffee").fontWeight(.semibold)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
@@ -712,11 +671,14 @@ struct SettingsView: View {
             }
 
             let keyName = KeyCodes.name(for: event.keyCode)
+            let newShortcut = ShortcutConfig(modifiers: mods.isEmpty ? ["hyper"] : mods, key: keyName)
 
-            if field == "optimize" {
-                self.config.shortcut = ShortcutConfig(modifiers: mods.isEmpty ? ["hyper"] : mods, key: keyName)
-            } else if field == "gui" {
-                self.config.guiShortcut = ShortcutConfig(modifiers: mods.isEmpty ? ["hyper"] : mods, key: keyName)
+            switch field {
+            case "optimize": self.config.shortcut = newShortcut
+            case "master": self.config.masterShortcut = newShortcut
+            case "lock": self.config.lockShortcut = newShortcut
+            case "gui": self.config.guiShortcut = newShortcut
+            default: break
             }
 
             self.config.save()
@@ -738,26 +700,21 @@ struct SettingsView: View {
         recordingField = nil
     }
 
-    // MARK: - Actions & Helpers
-    func checkAccessibility() {
+    // MARK: - Helpers
+    func checkStatus() {
         isAccessibilityGranted = AXIsProcessTrusted()
+        daemonStatus = ServiceInstaller.statusInfo()
+        recentLogs = ServiceInstaller.getRecentLogs()
     }
 
     func refreshData() {
-        memory = SpaceMemory.shared.profiles
-        checkAccessibility()
+        checkStatus()
         if let primary = NSScreen.main {
             let vf = primary.visibleFrame
             let h = NSScreen.screens.first?.frame.height ?? 0
             let axRect = CGRect(x: vf.origin.x, y: h - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
-            currentWindows = WindowManager.shared.collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps))
+            currentWindows = WindowManager.shared.collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps), config: config)
         }
-    }
-
-    func restartDaemonAction() {
-        ServiceInstaller.restart()
-        checkAccessibility()
-        showStatus("Daemon restarted.")
     }
 
     func triggerOptimizeNow() {

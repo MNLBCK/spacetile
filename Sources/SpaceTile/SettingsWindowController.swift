@@ -1,7 +1,7 @@
 import Cocoa
 import SwiftUI
 
-class SettingsWindowController {
+class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
     private var window: NSWindow?
@@ -10,8 +10,11 @@ class SettingsWindowController {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
 
-            if let existing = self.window {
-                existing.makeKeyAndOrderFront(nil)
+            NSApp.setActivationPolicy(.regular)
+
+            if let win = self.window {
+                win.orderFrontRegardless()
+                win.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 return
             }
@@ -30,8 +33,10 @@ class SettingsWindowController {
             win.contentViewController = hostingController
             win.isReleasedWhenClosed = false
             win.level = .floating // Stays on top when invoked
+            win.delegate = self
 
             self.window = win
+            win.orderFrontRegardless()
             win.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -39,5 +44,11 @@ class SettingsWindowController {
 
     func close() {
         window?.close()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if CommandLine.arguments.contains("daemon") {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 }

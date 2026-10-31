@@ -12,13 +12,27 @@ struct ManagedWindow {
     let title: String
     let isFocused: Bool
     let zOrder: Int
+    var isLocked: Bool
+    var currentFrame: CGRect
+    var score: Int
+    var minWidth: Double
+    var minHeight: Double
+    var maxWidth: Double?
 }
 
 class WindowManager {
     static let shared = WindowManager()
 
+    private(set) var lockedWindowIDs: Set<CGWindowID> = []
     private var lastRunTime: Date?
-    private var cycleIndex: Int = 0
+
+    func setWindowLocked(id: CGWindowID, locked: Bool) {
+        if locked {
+            lockedWindowIDs.insert(id)
+        } else {
+            lockedWindowIDs.remove(id)
+        }
+    }
 
     static func ensureAccessibility(prompt: Bool = true) -> Bool {
         let trusted = AXIsProcessTrusted()
@@ -29,19 +43,52 @@ class WindowManager {
         return trusted
     }
 
+    func toggleLockForFocusedWindow() -> (locked: Bool, appName: String)? {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
+        let appRef = AXUIElementCreateApplication(front.processIdentifier)
+        var winRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+              let win = winRef else { return nil }
+
+        var winID: CGWindowID = 0
+        guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return nil }
+
+        let appName = front.localizedName ?? "App"
+        if lockedWindowIDs.contains(winID) {
+            lockedWindowIDs.remove(winID)
+            print("[\u{001B}[33mSpaceTile\u{001B}[0m] Unlocked window for '\(appName)' (ID: \(winID))")
+            return (false, appName)
+        } else {
+            lockedWindowIDs.insert(winID)
+            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Locked window for '\(appName)' (ID: \(winID)) at current position.")
+            return (true, appName)
+        }
+    }
+
+    func setFocusedAsMaster() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return false }
+        let appRef = AXUIElementCreateApplication(front.processIdentifier)
+        var winRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+              let win = winRef else { return false }
+
+        var winID: CGWindowID = 0
+        guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return false }
+
+        return optimize(verbose: true, forcedMasterID: winID)
+    }
+
     @discardableResult
     func optimize(verbose: Bool = true, forcedMasterID: CGWindowID? = nil, forcedRatio: Double? = nil) -> Bool {
         guard WindowManager.ensureAccessibility(prompt: true) else {
-            print("[\u{001B}[31mFEHLER\u{001B}[0m] Bedienungshilfen-Berechtigung (Accessibility) nicht erteilt!")
-            print("Bitte in macOS: Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen aktivieren.")
+            print("[\u{001B}[31mERROR\u{001B}[0m] Accessibility permission not granted!")
             return false
         }
 
         let config = Config.load()
 
-        // 1. Determine target display
         guard let targetScreen = findTargetScreen() else {
-            if verbose { print("[\u{001B}[31mFEHLER\u{001B}[0m] Kein aktiver Bildschirm gefunden.") }
+            if verbose { print("[\u{001B}[31mERROR\u{001B}[0m] Target screen not found.") }
             return false
         }
 
@@ -59,218 +106,286 @@ class WindowManager {
         let workArea = axVisibleRect.insetBy(dx: config.margin, dy: config.margin)
         guard workArea.width > 200 && workArea.height > 200 else { return false }
 
-        // 2. Find visible windows on current Space
-        var windows = collectWindowsOnCurrentSpace(screenBounds: axVisibleRect, ignoredApps: Set(config.ignoredApps))
+        var windows = collectWindowsOnCurrentSpace(screenBounds: axVisibleRect, ignoredApps: Set(config.ignoredApps), config: config)
         if windows.isEmpty {
-            if verbose { print("[\u{001B}[33mINFO\u{001B}[0m] Keine relevanten Fenster im aktuellen Space gefunden.") }
+            if verbose { print("[\u{001B}[33mINFO\u{001B}[0m] No active windows in current Space.") }
             return true
         }
 
-        // Support forced master selection (e.g. from GUI)
+        // Handle forced master
         if let fid = forcedMasterID, let idx = windows.firstIndex(where: { $0.id == fid }) {
             let chosen = windows.remove(at: idx)
             windows.insert(chosen, at: 0)
         }
 
-        let appNames = Array(Set(windows.map { $0.appName })).sorted()
-        let resKey = "\(Int(targetScreen.frame.width))x\(Int(targetScreen.frame.height))"
-
-        // 3. Ratio determination
-        let now = Date()
-        var effectiveRatio: Double = forcedRatio ?? config.masterRatio
-        var layoutReason: String = "Standard Master-Stack (\(Int(effectiveRatio * 100))%)"
-
-        if let fr = forcedRatio {
-            layoutReason = "Benutzer-Vorgabe (\(Int(fr * 100))%)"
-        } else {
-            let isRapidCycle = (lastRunTime != nil && now.timeIntervalSince(lastRunTime!) < 2.2 && !config.cycleRatios.isEmpty)
-            if isRapidCycle {
-                cycleIndex = (cycleIndex + 1) % config.cycleRatios.count
-                effectiveRatio = config.cycleRatios[cycleIndex]
-                layoutReason = "Zyklus-Umschaltung (\(Int(effectiveRatio * 100))%)"
-            } else {
-                cycleIndex = 0
-
-                // Check learned space memory
-                if config.enableSpaceLearning,
-                   let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
-                   let learned = profile.learnedMasterRatio, profile.observationsCount >= 2 {
-                    effectiveRatio = learned
-                    layoutReason = "🧠 Gelerntes Space-Gedächtnis (\(Int(learned * 100))%)"
-                }
-                // Check semantic Side-by-Side (Notes + Browser)
-                else if config.sideBySideForNotesAndBrowser && windows.count == 2 {
-                    let categories = windows.map { getAppCategory(appName: $0.appName, config: config) }
-                    if (categories.contains("browser") && categories.contains("notes")) ||
-                       (categories.contains("notes") && categories.contains("custom")) {
-                        effectiveRatio = 0.50
-                        layoutReason = "📖 Side-by-Side (50/50 Lese- & Notizmodus)"
-                    }
-                }
-            }
-        }
-        lastRunTime = now
-
-        if verbose {
-            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Optimiere \(windows.count) Fenster auf '\(targetScreen.localizedName)' [\(layoutReason)]...")
-        }
-
-        // 4. Calculate frames with intelligent constraints
-        let frames = calculateLayout(
+        // Calculate layout with Grid & Scoring Engine
+        let frames = calculateGridScoringLayout(
             windows: windows,
-            area: workArea,
+            workArea: workArea,
             screen: targetScreen,
             config: config,
-            ratio: effectiveRatio,
-            isRapidCycle: forcedRatio != nil || (now.timeIntervalSince(lastRunTime ?? now) < 2.2)
+            forcedRatio: forcedRatio
         )
 
-        // 5. Apply positions & sizes (animated or immediate)
-        if config.enableAnimations && config.animationDuration > 0.05 {
+        // Apply frames
+        if config.animationMode == "smooth" && config.animationDuration > 0.05 {
             var moves: [(element: AXUIElement, start: CGRect, target: CGRect)] = []
-            for (index, win) in windows.enumerated() {
-                let target = frames[index]
-                let start = getWindowFrame(win.element) ?? target
-                moves.append((element: win.element, start: start, target: target))
+            for (i, win) in windows.enumerated() {
+                if win.isLocked { continue }
+                moves.append((element: win.element, start: win.currentFrame, target: frames[i]))
             }
-            animateWindows(moves: moves, duration: config.animationDuration)
+            animateWindowsSmooth(moves: moves, duration: config.animationDuration)
         } else {
-            for (index, win) in windows.enumerated() {
-                setWindowFrameImmediate(win.element, target: frames[index])
+            for (i, win) in windows.enumerated() {
+                if win.isLocked { continue }
+                setWindowFrameImmediate(win.element, target: frames[i])
             }
         }
 
         if verbose {
-            for (index, win) in windows.enumerated() {
-                let targetFrame = frames[index]
-                let tag = (index == 0) ? "\u{001B}[32m★ Master\u{001B}[0m" : "\u{001B}[37m  Stack \u{001B}[0m"
-                let titleShort = win.title.isEmpty ? "(ohne Titel)" : String(win.title.prefix(32))
-                let category = getAppCategory(appName: win.appName, config: config)
-                print(String(format: " %@[%@ (%@)] \"%@\" -> %dx%d @ (%d, %d)",
-                             tag,
-                             win.appName,
-                             category,
-                             titleShort,
-                             Int(targetFrame.width),
-                             Int(targetFrame.height),
-                             Int(targetFrame.origin.x),
-                             Int(targetFrame.origin.y)))
+            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Arranged \(windows.count) windows on '\(targetScreen.localizedName)'")
+            for (i, win) in windows.enumerated() {
+                let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (i == 0 ? "\u{001B}[32m★ Master\u{001B}[0m" : "  Stack ")
+                let f = frames[i]
+                print(String(format: " %@[%@ (Score %d)] -> %dx%d @ (%d, %d)",
+                             tag, win.appName, win.score, Int(f.width), Int(f.height), Int(f.origin.x), Int(f.origin.y)))
             }
         }
 
         return true
     }
 
-    private func getAppCategory(appName: String, config: Config) -> String {
-        if let match = config.appConstraints.first(where: { $0.appName.lowercased() == appName.lowercased() }) {
-            return match.category
-        }
-        let lower = appName.lowercased()
-        if lower.contains("term") || lower.contains("alacritty") || lower.contains("kitty") || lower.contains("ghostty") {
-            return "terminal"
-        }
-        if lower.contains("chrome") || lower.contains("safari") || lower.contains("firefox") || lower.contains("arc") || lower.contains("browser") {
-            return "browser"
-        }
-        if lower.contains("notes") || lower.contains("obsidian") || lower.contains("bear") || lower.contains("textedit") || lower.contains("notion") {
-            return "notes"
-        }
-        if lower.contains("code") || lower.contains("xcode") || lower.contains("sublime") || lower.contains("studio") {
-            return "editor"
-        }
-        return "custom"
-    }
-
-    private func calculateLayout(
+    // MARK: - Dynamic Grid & Score Layout Engine
+    private func calculateGridScoringLayout(
         windows: [ManagedWindow],
-        area: CGRect,
+        workArea: CGRect,
         screen: NSScreen,
         config: Config,
-        ratio: Double,
-        isRapidCycle: Bool
+        forcedRatio: Double?
     ) -> [CGRect] {
         let count = windows.count
         guard count > 0 else { return [] }
 
         let gap = config.gap
-        let master = windows[0]
-        let masterCategory = getAppCategory(appName: master.appName, config: config)
+        let is4K = screen.frame.width >= 2560
 
-        // 1 Window
-        if count == 1 {
+        // Dynamic Grid: 10 Cols x 6 Rows on 4K/Ultrawide (60 tiles), 6 Cols x 4 Rows on standard
+        let totalCols: Int = is4K ? 10 : (count <= 2 ? 6 : 8)
+        let totalRows: Int = is4K ? 6 : (count <= 2 ? 2 : 4)
+
+        let colWidth = (workArea.width - CGFloat(totalCols - 1) * gap) / CGFloat(totalCols)
+        let rowHeight = (workArea.height - CGFloat(totalRows - 1) * gap) / CGFloat(totalRows)
+
+        // Helper to convert grid coords (colStart, rowStart, colSpan, rowSpan) to CGRect
+        func rectFor(col: Int, row: Int, colSpan: Int, rowSpan: Int) -> CGRect {
+            let x = workArea.origin.x + CGFloat(col) * (colWidth + gap)
+            let y = workArea.origin.y + CGFloat(row) * (rowHeight + gap)
+            let w = CGFloat(colSpan) * colWidth + CGFloat(colSpan - 1) * gap
+            let h = CGFloat(rowSpan) * rowHeight + CGFloat(rowSpan - 1) * gap
+            return CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h))
+        }
+
+        // If any window is locked, preserve its current frame
+        var resultFrames = windows.map { $0.currentFrame }
+
+        // Find available bounding space excluding locked windows
+        let unlockedIndices = windows.indices.filter { !windows[$0].isLocked }
+        if unlockedIndices.isEmpty { return resultFrames }
+
+        // Single Unlocked Window
+        if unlockedIndices.count == 1 {
+            let idx = unlockedIndices[0]
             if config.singleWindowMode == "maximized" {
-                return [area]
+                resultFrames[idx] = workArea
             } else {
-                let w = area.width * 0.75
-                let h = area.height * 0.95
-                let x = area.origin.x + (area.width - w) / 2
-                let y = area.origin.y + (area.height - h) / 2
-                return [CGRect(x: x, y: y, width: w, height: h)]
+                let w = floor(workArea.width * 0.72)
+                let h = floor(workArea.height * 0.94)
+                let x = floor(workArea.origin.x + (workArea.width - w) / 2)
+                let y = floor(workArea.origin.y + (workArea.height - h) / 2)
+                resultFrames[idx] = CGRect(x: x, y: y, width: w, height: h)
+            }
+            return resultFrames
+        }
+
+        // 2 Unlocked Windows
+        if unlockedIndices.count == 2 {
+            let i0 = unlockedIndices[0]
+            let i1 = unlockedIndices[1]
+            let w0 = windows[i0]
+            let w1 = windows[i1]
+
+            // Determine column split based on score or forced ratio
+            let masterCols: Int
+            if let fr = forcedRatio {
+                masterCols = max(2, min(totalCols - 2, Int(round(Double(totalCols) * fr))))
+            } else if config.sideBySideForNotesAndBrowser &&
+                      ((w0.score >= 65 && w1.score <= 55) || (w1.score >= 65 && w0.score <= 55)) {
+                // Notes + Browser: Equal 50/50 split
+                masterCols = totalCols / 2
+            } else {
+                // If w0 is Terminal (low score ~30): give it 3-4 cols max on 10-col grid
+                if w0.score <= 35 && is4K {
+                    masterCols = 3 // 30% width: ~1140px on 4K! PERFECT FOR TERMINAL!
+                } else if w1.score <= 35 && is4K && w0.score > 50 {
+                    masterCols = 7 // 70% width for browser, 30% for terminal
+                } else {
+                    let totalScore = max(1, w0.score + w1.score)
+                    let ratio = Double(w0.score) / Double(totalScore)
+                    masterCols = max(3, min(totalCols - 3, Int(round(Double(totalCols) * ratio))))
+                }
+            }
+
+            let stackCols = totalCols - masterCols
+            resultFrames[i0] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
+            resultFrames[i1] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: totalRows)
+            return resultFrames
+        }
+
+        // 3 Unlocked Windows
+        if unlockedIndices.count == 3 {
+            let mIdx = unlockedIndices[0]
+            let s0 = unlockedIndices[1]
+            let s1 = unlockedIndices[2]
+
+            let masterWin = windows[mIdx]
+            let masterCols: Int
+            if let fr = forcedRatio {
+                masterCols = max(2, min(totalCols - 2, Int(round(Double(totalCols) * fr))))
+            } else if masterWin.score <= 35 && is4K {
+                masterCols = 3
+            } else {
+                masterCols = is4K ? 6 : (totalCols * 6 / 10)
+            }
+
+            let stackCols = totalCols - masterCols
+            let r0 = totalRows / 2
+            let r1 = totalRows - r0
+            resultFrames[mIdx] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
+            resultFrames[s0] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: r0)
+            resultFrames[s1] = rectFor(col: masterCols, row: r0, colSpan: stackCols, rowSpan: r1)
+            return resultFrames
+        }
+
+        // 4+ Unlocked Windows: Use the 3x3 Signature Layout (Master top-left 2/3, Right stack 1/3, Bottom stack 1/3)
+        let masterIdx = unlockedIndices[0]
+        let remaining = Array(unlockedIndices.dropFirst())
+
+        let cellW3 = (workArea.width - 2 * gap) / 3.0
+        let cellH3 = (workArea.height - 2 * gap) / 3.0
+
+        func rect3x3(c: Int, r: Int, cSpan: Int, rSpan: Int) -> CGRect {
+            let x = workArea.origin.x + CGFloat(c) * (cellW3 + gap)
+            let y = workArea.origin.y + CGFloat(r) * (cellH3 + gap)
+            let w = CGFloat(cSpan) * cellW3 + CGFloat(cSpan - 1) * gap
+            let h = CGFloat(rSpan) * cellH3 + CGFloat(rSpan - 1) * gap
+            return CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h))
+        }
+
+        if unlockedIndices.count == 4 {
+            // Master (2/3 width, 2/3 height)
+            resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+            // Bottom (under master: 2/3 width, 1/3 height)
+            resultFrames[remaining[0]] = rect3x3(c: 0, r: 2, cSpan: 2, rSpan: 1)
+            // Right stack (2 windows: 1/3 width, 1/2 height each)
+            let halfH = (workArea.height - gap) / 2.0
+            let rightX = workArea.origin.x + 2 * (cellW3 + gap)
+            resultFrames[remaining[1]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
+            resultFrames[remaining[2]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
+            return resultFrames
+        }
+
+        if unlockedIndices.count == 5 {
+            // Master (2/3 width, 2/3 height)
+            resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+            // Bottom 2 windows (under master: each 1/3 width, 1/3 height)
+            resultFrames[remaining[0]] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
+            resultFrames[remaining[1]] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
+            // Right stack (2 windows: 1/3 width, 1/2 height each)
+            let halfH = (workArea.height - gap) / 2.0
+            let rightX = workArea.origin.x + 2 * (cellW3 + gap)
+            resultFrames[remaining[2]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
+            resultFrames[remaining[3]] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
+            return resultFrames
+        }
+
+        if unlockedIndices.count == 6 {
+            // THE EXACT 6-WINDOW SIGNATURE 3x3 LAYOUT:
+            // Master (Top-Left: 2/3 width, 2/3 height)
+            resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+            // Right 1 (Top-Right: 1/3 width, 1/3 height)
+            resultFrames[remaining[0]] = rect3x3(c: 2, r: 0, cSpan: 1, rSpan: 1)
+            // Right 2 (Mid-Right: 1/3 width, 1/3 height)
+            resultFrames[remaining[1]] = rect3x3(c: 2, r: 1, cSpan: 1, rSpan: 1)
+            // Right 3 (Bottom-Right: 1/3 width, 1/3 height)
+            resultFrames[remaining[2]] = rect3x3(c: 2, r: 2, cSpan: 1, rSpan: 1)
+            // Bottom 1 (Bottom-Left: 1/3 width, 1/3 height)
+            resultFrames[remaining[3]] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
+            // Bottom 2 (Bottom-Mid: 1/3 width, 1/3 height)
+            resultFrames[remaining[4]] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
+            return resultFrames
+        }
+
+        // For 7+ windows: Master gets top-left 2/3, remaining split into right stack and bottom row
+        resultFrames[masterIdx] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
+        let rightCount = (remaining.count + 1) / 2
+        let bottomCount = remaining.count - rightCount
+
+        let rightH = (workArea.height - CGFloat(rightCount - 1) * gap) / CGFloat(rightCount)
+        let rightX = workArea.origin.x + 2 * (cellW3 + gap)
+        for i in 0..<rightCount {
+            let ry = workArea.origin.y + CGFloat(i) * (rightH + gap)
+            resultFrames[remaining[i]] = CGRect(x: floor(rightX), y: floor(ry), width: floor(cellW3), height: floor(rightH))
+        }
+
+        let bottomW = (2 * cellW3 + gap - CGFloat(bottomCount - 1) * gap) / CGFloat(bottomCount)
+        let bottomY = workArea.origin.y + 2 * (cellH3 + gap)
+        for i in 0..<bottomCount {
+            let bx = workArea.origin.x + CGFloat(i) * (bottomW + gap)
+            resultFrames[remaining[rightCount + i]] = CGRect(x: floor(bx), y: floor(bottomY), width: floor(bottomW), height: floor(cellH3))
+        }
+
+        return resultFrames
+    }
+
+    private func animateWindowsSmooth(moves: [(element: AXUIElement, start: CGRect, target: CGRect)], duration: Double) {
+        // Fast 4-step glide (zero lag, avoids IPC congestion)
+        let steps = 4
+        let interval = duration / Double(steps)
+
+        for step in 1...steps {
+            let progress = Double(step) / Double(steps)
+            let ease = 1.0 - pow(1.0 - progress, 2.0)
+
+            for move in moves {
+                let curX = move.start.origin.x + (move.target.origin.x - move.start.origin.x) * ease
+                let curY = move.start.origin.y + (move.target.origin.y - move.start.origin.y) * ease
+                let curW = move.start.size.width + (move.target.size.width - move.start.size.width) * ease
+                let curH = move.start.size.height + (move.target.size.height - move.start.size.height) * ease
+                setWindowFrameImmediate(move.element, target: CGRect(x: curX, y: curY, width: curW, height: curH))
+            }
+            if step < steps {
+                usleep(useconds_t(interval * 1_000_000.0))
             }
         }
 
-        let availW = area.width - gap
-        var masterW: Double = floor(availW * ratio)
-
-        // Smart Constraint: Terminal on 4K/Ultra-Wide screens
-        let isUltraWide = screen.frame.width >= 2560
-        if config.enableSmartWeighting && !isRapidCycle && masterCategory == "terminal" && isUltraWide {
-            let maxTerminalW = min(config.terminalMaxWidth4K, floor(availW * config.terminalMaxRatio4K))
-            masterW = min(masterW, maxTerminalW)
+        for move in moves {
+            setWindowFrameImmediate(move.element, target: move.target)
         }
+    }
 
-        let stackW = availW - masterW
+    func setWindowFrameImmediate(_ element: AXUIElement, target: CGRect) {
+        var pos = target.origin
+        var size = target.size
 
-        // 2 Windows
-        if count == 2 {
-            let r0 = CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height)
-            let r1 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y, width: stackW, height: area.height)
-            return [r0, r1]
+        if let valPos = AXValueCreate(.cgPoint, &pos) {
+            AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
         }
-
-        // 3 Windows
-        if count == 3 {
-            let availH = area.height - gap
-            let itemH = floor(availH / 2.0)
-            let itemH2 = availH - itemH
-
-            let r0 = CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height)
-            let r1 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y, width: stackW, height: itemH)
-            let r2 = CGRect(x: area.origin.x + masterW + gap, y: area.origin.y + itemH + gap, width: stackW, height: itemH2)
-            return [r0, r1, r2]
+        if let valSize = AXValueCreate(.cgSize, &size) {
+            AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, valSize)
         }
-
-        // 4 Windows: Grid when ratio is 0.50
-        if count == 4 && abs(ratio - 0.5) < 0.05 {
-            let colW = floor((area.width - gap) / 2.0)
-            let rowH = floor((area.height - gap) / 2.0)
-            let colW2 = area.width - gap - colW
-            let rowH2 = area.height - gap - rowH
-
-            let p0 = CGRect(x: area.origin.x, y: area.origin.y, width: colW, height: rowH)
-            let p1 = CGRect(x: area.origin.x + colW + gap, y: area.origin.y, width: colW2, height: rowH)
-            let p2 = CGRect(x: area.origin.x, y: area.origin.y + rowH + gap, width: colW, height: rowH2)
-            let p3 = CGRect(x: area.origin.x + colW + gap, y: area.origin.y + rowH + gap, width: colW2, height: rowH2)
-            return [p0, p1, p2, p3]
+        if let valPos = AXValueCreate(.cgPoint, &pos) {
+            AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
         }
-
-        // N Windows (1 Master, N-1 Stack)
-        let stackCount = count - 1
-        let totalGaps = gap * Double(stackCount - 1)
-        let totalStackH = area.height - totalGaps
-        let baseItemH = floor(totalStackH / Double(stackCount))
-
-        var result: [CGRect] = []
-        result.append(CGRect(x: area.origin.x, y: area.origin.y, width: masterW, height: area.height))
-
-        var currentY = area.origin.y
-        for i in 0..<stackCount {
-            let itemH = (i == stackCount - 1) ? (area.origin.y + area.height - currentY) : baseItemH
-            result.append(CGRect(x: area.origin.x + masterW + gap, y: currentY, width: stackW, height: itemH))
-            currentY += itemH + gap
-        }
-
-        return result
     }
 
     private func findTargetScreen() -> NSScreen? {
@@ -307,7 +422,7 @@ class WindowManager {
         return NSScreen.main ?? NSScreen.screens.first
     }
 
-    func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>) -> [ManagedWindow] {
+    func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>, config: Config) -> [ManagedWindow] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let cgWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
@@ -324,7 +439,6 @@ class WindowManager {
             let y = bounds["Y"] as? Double ?? 0
             let rect = CGRect(x: x, y: y, width: w, height: h)
 
-            // Strictly check layer 0 and intersects screenBounds
             if layer == 0 && w >= 150 && h >= 150 && rect.intersects(screenBounds) {
                 onScreenMap[id] = order
             }
@@ -372,6 +486,15 @@ class WindowManager {
                 let title = titleRef as? String ?? ""
 
                 let isFocused = (winID == focusedWindowID)
+                let isLocked = lockedWindowIDs.contains(winID)
+                let currentFrame = getWindowFrame(win) ?? CGRect.zero
+
+                // Scoring lookup
+                let weightConfig = config.appWeights.first(where: { $0.appName.lowercased() == appName.lowercased() })
+                let score = weightConfig?.score ?? defaultScoreFor(appName: appName)
+                let minW = weightConfig?.minWidth ?? 450
+                let minH = weightConfig?.minHeight ?? 350
+                let maxW = weightConfig?.maxWidth
 
                 managed.append(ManagedWindow(
                     element: win,
@@ -379,12 +502,21 @@ class WindowManager {
                     appName: appName,
                     title: title,
                     isFocused: isFocused,
-                    zOrder: zOrder
+                    zOrder: zOrder,
+                    isLocked: isLocked,
+                    currentFrame: currentFrame,
+                    score: score,
+                    minWidth: minW,
+                    minHeight: minH,
+                    maxWidth: maxW
                 ))
             }
         }
 
         managed.sort { a, b in
+            if abs(a.score - b.score) > 10 {
+                return a.score > b.score
+            }
             if a.isFocused != b.isFocused {
                 return a.isFocused
             }
@@ -392,6 +524,23 @@ class WindowManager {
         }
 
         return managed
+    }
+
+    private func defaultScoreFor(appName: String) -> Int {
+        let lower = appName.lowercased()
+        if lower.contains("term") || lower.contains("kitty") || lower.contains("alacritty") || lower.contains("ghostty") {
+            return 32
+        }
+        if lower.contains("chrome") || lower.contains("safari") || lower.contains("firefox") || lower.contains("arc") || lower.contains("browser") {
+            return 72
+        }
+        if lower.contains("code") || lower.contains("xcode") || lower.contains("studio") {
+            return 75
+        }
+        if lower.contains("notes") || lower.contains("obsidian") || lower.contains("bear") {
+            return 50
+        }
+        return 50
     }
 
     private func getWindowFrame(_ element: AXUIElement) -> CGRect? {
@@ -409,47 +558,5 @@ class WindowManager {
             return nil
         }
         return CGRect(origin: pt, size: sz)
-    }
-
-    private func animateWindows(moves: [(element: AXUIElement, start: CGRect, target: CGRect)], duration: Double) {
-        let steps = max(8, Int(duration * 60.0))
-        let interval = duration / Double(steps)
-
-        for step in 1...steps {
-            let progress = Double(step) / Double(steps)
-            // Cubic ease-out
-            let ease = 1.0 - pow(1.0 - progress, 3.0)
-
-            for move in moves {
-                let curX = move.start.origin.x + (move.target.origin.x - move.start.origin.x) * ease
-                let curY = move.start.origin.y + (move.target.origin.y - move.start.origin.y) * ease
-                let curW = move.start.size.width + (move.target.size.width - move.start.size.width) * ease
-                let curH = move.start.size.height + (move.target.size.height - move.start.size.height) * ease
-                setWindowFrameImmediate(move.element, target: CGRect(x: curX, y: curY, width: curW, height: curH))
-            }
-            if step < steps {
-                usleep(useconds_t(interval * 1_000_000.0))
-            }
-        }
-
-        // Final settle
-        for move in moves {
-            setWindowFrameImmediate(move.element, target: move.target)
-        }
-    }
-
-    private func setWindowFrameImmediate(_ element: AXUIElement, target: CGRect) {
-        var pos = target.origin
-        var size = target.size
-
-        if let valPos = AXValueCreate(.cgPoint, &pos) {
-            AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
-        }
-        if let valSize = AXValueCreate(.cgSize, &size) {
-            AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, valSize)
-        }
-        if let valPos = AXValueCreate(.cgPoint, &pos) {
-            AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, valPos)
-        }
     }
 }

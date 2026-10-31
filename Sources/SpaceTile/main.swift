@@ -34,6 +34,12 @@ switch command {
 case "optimize", "run":
     _ = WindowManager.shared.optimize(verbose: true)
 
+case "master":
+    _ = WindowManager.shared.setFocusedAsMaster()
+
+case "lock":
+    _ = WindowManager.shared.toggleLockForFocusedWindow()
+
 case "gui", "settings":
     let app = NSApplication.shared
     app.setActivationPolicy(.regular)

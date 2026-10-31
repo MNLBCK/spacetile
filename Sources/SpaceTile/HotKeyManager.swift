@@ -4,12 +4,13 @@ import Carbon
 class HotKeyManager {
     static let shared = HotKeyManager()
 
-    private var optimizeHotKeyRef: EventHotKeyRef?
-    private var guiHotKeyRef: EventHotKeyRef?
+    private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
     private var eventHandler: EventHandlerRef?
 
-    var onHotKeyTriggered: (() -> Void)?
+    var onRearrangeTriggered: (() -> Void)?
     var onGUITriggered: (() -> Void)?
+    var onSetMasterTriggered: (() -> Void)?
+    var onToggleLockTriggered: (() -> Void)?
 
     func register(config: Config) -> Bool {
         unregister()
@@ -19,7 +20,7 @@ class HotKeyManager {
             eventKind: UInt32(kEventHotKeyPressed)
         )
 
-        let handler: EventHandlerUPP = { (_, theEvent, userData) -> OSStatus in
+        let handler: EventHandlerUPP = { (_, theEvent, _) -> OSStatus in
             guard let theEvent else { return noErr }
             var hotKeyID = EventHotKeyID()
             let status = GetEventParameter(
@@ -32,10 +33,12 @@ class HotKeyManager {
                 &hotKeyID
             )
             if status == noErr {
-                if hotKeyID.id == 1 {
-                    HotKeyManager.shared.onHotKeyTriggered?()
-                } else if hotKeyID.id == 2 {
-                    HotKeyManager.shared.onGUITriggered?()
+                switch hotKeyID.id {
+                case 1: HotKeyManager.shared.onRearrangeTriggered?()
+                case 2: HotKeyManager.shared.onGUITriggered?()
+                case 3: HotKeyManager.shared.onSetMasterTriggered?()
+                case 4: HotKeyManager.shared.onToggleLockTriggered?()
+                default: break
                 }
             }
             return noErr
@@ -51,42 +54,45 @@ class HotKeyManager {
         )
 
         guard installStatus == noErr else {
-            print("[\u{001B}[31mFEHLER\u{001B}[0m] InstallEventHandler fehlgeschlagen: \(installStatus)")
+            print("[\u{001B}[31mERROR\u{001B}[0m] InstallEventHandler failed: \(installStatus)")
             return false
         }
 
-        // 1. Register Optimize Hotkey (ID 1)
-        if let key1 = KeyCodes.keyCode(for: config.shortcut.key) {
-            let mod1 = KeyCodes.modifierMask(for: config.shortcut.modifiers)
-            let id1 = EventHotKeyID(signature: OSType(0x53505431), id: 1)
-            let res = RegisterEventHotKey(key1, mod1, id1, GetApplicationEventTarget(), 0, &optimizeHotKeyRef)
-            if res == noErr {
-                print("[\u{001B}[32mSpaceTile\u{001B}[0m] Shortcut 'Optimieren': [\(config.shortcut.displayString)]")
-            }
-        }
-
-        // 2. Register GUI Settings Hotkey (ID 2)
-        if let key2 = KeyCodes.keyCode(for: config.guiShortcut.key) {
-            let mod2 = KeyCodes.modifierMask(for: config.guiShortcut.modifiers)
-            let id2 = EventHotKeyID(signature: OSType(0x53505432), id: 2)
-            let res = RegisterEventHotKey(key2, mod2, id2, GetApplicationEventTarget(), 0, &guiHotKeyRef)
-            if res == noErr {
-                print("[\u{001B}[32mSpaceTile\u{001B}[0m] Shortcut 'Einstellungen (GUI)': [\(config.guiShortcut.displayString)]")
-            }
-        }
+        // 1. Rearrange (ID 1)
+        registerSingle(config.shortcut, id: 1, name: "Rearrange")
+        // 2. GUI (ID 2)
+        registerSingle(config.guiShortcut, id: 2, name: "Settings GUI")
+        // 3. Set Master (ID 3)
+        registerSingle(config.masterShortcut, id: 3, name: "Set as Master")
+        // 4. Toggle Lock (ID 4)
+        registerSingle(config.lockShortcut, id: 4, name: "Toggle Lock")
 
         return true
     }
 
+    private func registerSingle(_ shortcut: ShortcutConfig, id: UInt32, name: String) {
+        guard let key = KeyCodes.keyCode(for: shortcut.key) else {
+            print("[\u{001B}[33mWARN\u{001B}[0m] Unknown key '\(shortcut.key)' for '\(name)'")
+            return
+        }
+        let mods = KeyCodes.modifierMask(for: shortcut.modifiers)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x53505400 + id), id: id)
+        var ref: EventHotKeyRef?
+        let res = RegisterEventHotKey(key, mods, hotKeyID, GetApplicationEventTarget(), 0, &ref)
+        if res == noErr, let r = ref {
+            hotKeyRefs[id] = r
+            print("[\u{001B}[32mSpaceTile\u{001B}[0m] '\(name)' bound to: [\(shortcut.displayString)]")
+        } else {
+            print("[\u{001B}[31mERROR\u{001B}[0m] Could not bind '\(name)': error \(res)")
+        }
+    }
+
     func unregister() {
-        if let ref = optimizeHotKeyRef {
+        for (_, ref) in hotKeyRefs {
             UnregisterEventHotKey(ref)
-            optimizeHotKeyRef = nil
         }
-        if let ref = guiHotKeyRef {
-            UnregisterEventHotKey(ref)
-            guiHotKeyRef = nil
-        }
+        hotKeyRefs.removeAll()
+
         if let handler = eventHandler {
             RemoveEventHandler(handler)
             eventHandler = nil

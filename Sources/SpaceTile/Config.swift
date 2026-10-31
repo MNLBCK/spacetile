@@ -19,55 +19,66 @@ struct ShortcutConfig: Codable, Equatable {
     }
 }
 
-struct AppConstraint: Codable, Identifiable {
+struct AppWeightConfig: Codable, Identifiable {
     var id: String { appName }
     var appName: String
-    var category: String // "terminal", "browser", "notes", "editor", "custom"
+    var score: Int // 1 to 100 weight
+    var minWidth: Double
+    var minHeight: Double
     var maxWidth: Double?
-    var minWidth: Double?
-    var maxRatio4K: Double?
-    var preferSideBySide: Bool?
-    var presetWidth: Double? // 393 (iPhone), 834 (iPad), nil
 }
 
 struct Config: Codable {
-    var shortcut: ShortcutConfig
-    var guiShortcut: ShortcutConfig
-    var masterRatio: Double
+    // Shortcuts
+    var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)
+    var masterShortcut: ShortcutConfig // Set Master (Hyper+Return)
+    var lockShortcut: ShortcutConfig   // Lock Window (Hyper+L)
+    var guiShortcut: ShortcutConfig    // Settings (Hyper+S)
+
+    // Layout & Spacing
     var gap: Double
     var margin: Double
     var singleWindowMode: String // "centered" or "maximized"
-    var cycleRatios: [Double]
-    var ignoredApps: [String]
 
-    // Smart Constraints & Weights
-    var enableSmartWeighting: Bool
-    var terminalMaxWidth4K: Double
-    var terminalMaxRatio4K: Double
-    var sideBySideForNotesAndBrowser: Bool
-    var appConstraints: [AppConstraint]
-
-    // Space Learning
-    var enableSpaceLearning: Bool
-
-    // Window Animations
-    var enableAnimations: Bool
+    // Animation: "instant" (recommended, zero lag) or "smooth" (4-step glide)
+    var animationMode: String
     var animationDuration: Double
 
+    // Grid & Weights
+    var appWeights: [AppWeightConfig]
+    var sideBySideForNotesAndBrowser: Bool
+    var enableSpaceLearning: Bool
+
+    var ignoredApps: [String]
+
     static let `default` = Config(
-        shortcut: ShortcutConfig(
-            modifiers: ["hyper"],
-            key: "space"
-        ),
-        guiShortcut: ShortcutConfig(
-            modifiers: ["hyper"],
-            key: "s"
-        ),
-        masterRatio: 0.62,
+        shortcut: ShortcutConfig(modifiers: ["hyper"], key: "space"),
+        masterShortcut: ShortcutConfig(modifiers: ["hyper"], key: "return"),
+        lockShortcut: ShortcutConfig(modifiers: ["hyper"], key: "l"),
+        guiShortcut: ShortcutConfig(modifiers: ["hyper"], key: "s"),
         gap: 10.0,
         margin: 12.0,
         singleWindowMode: "centered",
-        cycleRatios: [0.62, 0.50, 0.75],
+        animationMode: "instant",
+        animationDuration: 0.12,
+        appWeights: [
+            AppWeightConfig(appName: "iTerm2", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1150),
+            AppWeightConfig(appName: "Terminal", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1150),
+            AppWeightConfig(appName: "Ghostty", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1150),
+            AppWeightConfig(appName: "Alacritty", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1150),
+            AppWeightConfig(appName: "kitty", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1150),
+            AppWeightConfig(appName: "Google Chrome", score: 72, minWidth: 500, minHeight: 400, maxWidth: nil),
+            AppWeightConfig(appName: "Safari", score: 70, minWidth: 500, minHeight: 400, maxWidth: nil),
+            AppWeightConfig(appName: "Arc", score: 70, minWidth: 500, minHeight: 400, maxWidth: nil),
+            AppWeightConfig(appName: "Firefox", score: 70, minWidth: 500, minHeight: 400, maxWidth: nil),
+            AppWeightConfig(appName: "Obsidian", score: 50, minWidth: 450, minHeight: 350, maxWidth: 1050),
+            AppWeightConfig(appName: "Notes", score: 48, minWidth: 400, minHeight: 350, maxWidth: 1000),
+            AppWeightConfig(appName: "Bear", score: 48, minWidth: 400, minHeight: 350, maxWidth: 1000),
+            AppWeightConfig(appName: "Code", score: 75, minWidth: 700, minHeight: 450, maxWidth: nil),
+            AppWeightConfig(appName: "Xcode", score: 78, minWidth: 800, minHeight: 500, maxWidth: nil)
+        ],
+        sideBySideForNotesAndBrowser: true,
+        enableSpaceLearning: true,
         ignoredApps: [
             "Vorssaint",
             "System Settings",
@@ -78,30 +89,7 @@ struct Config: Codable {
             "QuickTime Player",
             "Activity Monitor",
             "Aktivitätsanzeige"
-        ],
-        enableSmartWeighting: true,
-        terminalMaxWidth4K: 1150.0,
-        terminalMaxRatio4K: 0.34,
-        sideBySideForNotesAndBrowser: true,
-        appConstraints: [
-            AppConstraint(appName: "iTerm2", category: "terminal", maxWidth: 1150.0, minWidth: 650.0, maxRatio4K: 0.34, preferSideBySide: false, presetWidth: nil),
-            AppConstraint(appName: "Terminal", category: "terminal", maxWidth: 1150.0, minWidth: 650.0, maxRatio4K: 0.34, preferSideBySide: false, presetWidth: nil),
-            AppConstraint(appName: "Ghostty", category: "terminal", maxWidth: 1150.0, minWidth: 650.0, maxRatio4K: 0.34, preferSideBySide: false, presetWidth: nil),
-            AppConstraint(appName: "Alacritty", category: "terminal", maxWidth: 1150.0, minWidth: 650.0, maxRatio4K: 0.34, preferSideBySide: false, presetWidth: nil),
-            AppConstraint(appName: "kitty", category: "terminal", maxWidth: 1150.0, minWidth: 650.0, maxRatio4K: 0.34, preferSideBySide: false, presetWidth: nil),
-            AppConstraint(appName: "Google Chrome", category: "browser", maxWidth: nil, minWidth: 500.0, maxRatio4K: nil, preferSideBySide: true, presetWidth: nil),
-            AppConstraint(appName: "Safari", category: "browser", maxWidth: nil, minWidth: 500.0, maxRatio4K: nil, preferSideBySide: true, presetWidth: nil),
-            AppConstraint(appName: "Arc", category: "browser", maxWidth: nil, minWidth: 500.0, maxRatio4K: nil, preferSideBySide: true, presetWidth: nil),
-            AppConstraint(appName: "Firefox", category: "browser", maxWidth: nil, minWidth: 500.0, maxRatio4K: nil, preferSideBySide: true, presetWidth: nil),
-            AppConstraint(appName: "Obsidian", category: "notes", maxWidth: 1000.0, minWidth: 450.0, maxRatio4K: 0.50, preferSideBySide: true, presetWidth: nil),
-            AppConstraint(appName: "Notes", category: "notes", maxWidth: 950.0, minWidth: 400.0, maxRatio4K: 0.50, preferSideBySide: true, presetWidth: nil),
-            AppConstraint(appName: "Bear", category: "notes", maxWidth: 950.0, minWidth: 400.0, maxRatio4K: 0.50, preferSideBySide: true, presetWidth: nil),
-            AppConstraint(appName: "Code", category: "editor", maxWidth: nil, minWidth: 700.0, maxRatio4K: nil, preferSideBySide: false, presetWidth: nil),
-            AppConstraint(appName: "Xcode", category: "editor", maxWidth: nil, minWidth: 800.0, maxRatio4K: nil, preferSideBySide: false, presetWidth: nil)
-        ],
-        enableSpaceLearning: true,
-        enableAnimations: true,
-        animationDuration: 0.25
+        ]
     )
 
     static var configURL: URL {
@@ -120,13 +108,8 @@ struct Config: Codable {
         do {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
-            var loaded = try decoder.decode(Config.self, from: data)
-            if loaded.appConstraints.isEmpty {
-                loaded.appConstraints = Config.default.appConstraints
-            }
-            return loaded
+            return try decoder.decode(Config.self, from: data)
         } catch {
-            print("[\u{001B}[33mWARN\u{001B}[0m] Aktualisiere Konfiguration auf neue Version...")
             let def = Config.default
             def.save()
             return def
