@@ -4,14 +4,23 @@ import Cocoa
 struct ServiceInstaller {
     static let label = "com.guppi.spacetile"
 
-    static var plistURL: URL {
+    static var appURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent("Library/LaunchAgents/\(label).plist")
+        return home.appendingPathComponent("Applications/SpaceTile.app")
     }
 
     static var binaryDestination: URL {
+        return appURL.appendingPathComponent("Contents/MacOS/spacetile")
+    }
+
+    static var symlinkDestination: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".local/bin/spacetile")
+    }
+
+    static var plistURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent("Library/LaunchAgents/\(label).plist")
     }
 
     static var logFileURL: URL {
@@ -21,34 +30,107 @@ struct ServiceInstaller {
 
     static func install() {
         let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
+
+        // 1. Create App Bundle Directories
+        let macosDir = appURL.appendingPathComponent("Contents/MacOS")
+        let resDir = appURL.appendingPathComponent("Contents/Resources")
+        try? fileManager.createDirectory(at: macosDir, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: resDir, withIntermediateDirectories: true)
+
+        // 2. Copy Executable into App Bundle
         let currentExecutable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-
-        let binDir = binaryDestination.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
-
         do {
             if currentExecutable.standardized.path != binaryDestination.standardized.path {
                 if fileManager.fileExists(atPath: binaryDestination.path) {
                     try fileManager.removeItem(at: binaryDestination)
                 }
                 try fileManager.copyItem(at: currentExecutable, to: binaryDestination)
-                print("[\u{001B}[32mOK\u{001B}[0m] Installed binary to: \(binaryDestination.path)")
-
-                // Ensure binary has a stable identifier for macOS TCC
-                let signProcess = Process()
-                signProcess.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-                signProcess.arguments = ["-s", "-", "--force", "--identifier", "com.guppi.spacetile", binaryDestination.path]
-                try? signProcess.run()
-                signProcess.waitUntilExit()
+                try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryDestination.path)
             }
+            print("[\u{001B}[32mOK\u{001B}[0m] App binary installed to: \(binaryDestination.path)")
         } catch {
             print("[\u{001B}[31mERROR\u{001B}[0m] Could not copy binary: \(error)")
             return
         }
 
-        let home = fileManager.homeDirectoryForCurrentUser.path
-        let logDir = "\(home)/Library/Logs/SpaceTile"
-        try? fileManager.createDirectory(atPath: logDir, withIntermediateDirectories: true, attributes: nil)
+        // 3. Copy Icons into Bundle Resources
+        let assetPaths = [
+            Bundle.main.bundleURL.appendingPathComponent("assets"),
+            home.appendingPathComponent("Code/spacetile/assets"),
+            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("assets")
+        ]
+        for assetDir in assetPaths {
+            let icns = assetDir.appendingPathComponent("AppIcon.icns")
+            let png = assetDir.appendingPathComponent("AppIcon.png")
+            if fileManager.fileExists(atPath: icns.path) {
+                let dest = resDir.appendingPathComponent("AppIcon.icns")
+                try? fileManager.removeItem(at: dest)
+                try? fileManager.copyItem(at: icns, to: dest)
+            }
+            if fileManager.fileExists(atPath: png.path) {
+                let dest = resDir.appendingPathComponent("AppIcon.png")
+                try? fileManager.removeItem(at: dest)
+                try? fileManager.copyItem(at: png, to: dest)
+            }
+        }
+
+        // 4. Write Info.plist & PkgInfo
+        let infoPlistContent = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleName</key>
+            <string>SpaceTile</string>
+            <key>CFBundleDisplayName</key>
+            <string>SpaceTile</string>
+            <key>CFBundleIdentifier</key>
+            <string>\(label)</string>
+            <key>CFBundleVersion</key>
+            <string>1.3.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.3.0</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleExecutable</key>
+            <string>spacetile</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>13.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>NSAppleEventsUsageDescription</key>
+            <string>SpaceTile requires Accessibility permissions to tile and arrange windows.</string>
+        </dict>
+        </plist>
+        """
+        let infoPlistURL = appURL.appendingPathComponent("Contents/Info.plist")
+        try? infoPlistContent.write(to: infoPlistURL, atomically: true, encoding: .utf8)
+        let pkgInfoURL = appURL.appendingPathComponent("Contents/PkgInfo")
+        try? "APPL????".write(to: pkgInfoURL, atomically: true, encoding: .utf8)
+
+        // 5. Deep Sign Bundle with Stable Identifier
+        let signProcess = Process()
+        signProcess.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        signProcess.arguments = ["-s", "-", "--force", "--deep", "--identifier", label, appURL.path]
+        try? signProcess.run()
+        signProcess.waitUntilExit()
+        print("[\u{001B}[32mOK\u{001B}[0m] Signed SpaceTile.app with identifier '\(label)'")
+
+        // 6. Create CLI Symlink at ~/.local/bin/spacetile
+        let binDir = symlinkDestination.deletingLastPathComponent()
+        try? fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
+        if fileManager.fileExists(atPath: symlinkDestination.path) {
+            try? fileManager.removeItem(at: symlinkDestination)
+        }
+        try? fileManager.createSymbolicLink(at: symlinkDestination, withDestinationURL: binaryDestination)
+        print("[\u{001B}[32mOK\u{001B}[0m] Symlinked CLI tool to: \(symlinkDestination.path)")
+
+        // 7. Write LaunchAgent Plist
+        let logDir = home.appendingPathComponent("Library/Logs/SpaceTile").path
+        try? fileManager.createDirectory(atPath: logDir, withIntermediateDirectories: true)
 
         let plistContent = """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -75,20 +157,14 @@ struct ServiceInstaller {
         </dict>
         </plist>
         """
-
         let agentDir = plistURL.deletingLastPathComponent()
         try? fileManager.createDirectory(at: agentDir, withIntermediateDirectories: true)
+        try? plistContent.write(to: plistURL, atomically: true, encoding: .utf8)
+        print("[\u{001B}[32mOK\u{001B}[0m] LaunchAgent written to: \(plistURL.path)")
 
-        do {
-            try plistContent.write(to: plistURL, atomically: true, encoding: .utf8)
-            print("[\u{001B}[32mOK\u{001B}[0m] LaunchAgent written to: \(plistURL.path)")
-        } catch {
-            print("[\u{001B}[31mERROR\u{001B}[0m] Could not write plist: \(error)")
-            return
-        }
-
+        // 8. Restart Daemon
         restart()
-        print("[\u{001B}[32mSUCCESS\u{001B}[0m] SpaceTile Daemon is running and registered for login auto-start!")
+        print("[\u{001B}[32mSUCCESS\u{001B}[0m] SpaceTile.app installed and daemon active!")
     }
 
     static func uninstall() {
@@ -97,23 +173,32 @@ struct ServiceInstaller {
         if fileManager.fileExists(atPath: plistURL.path) {
             try? fileManager.removeItem(at: plistURL)
         }
-        if fileManager.fileExists(atPath: binaryDestination.path) {
-            try? fileManager.removeItem(at: binaryDestination)
+        if fileManager.fileExists(atPath: appURL.path) {
+            try? fileManager.removeItem(at: appURL)
         }
-        print("[\u{001B}[32mOK\u{001B}[0m] Uninstalled SpaceTile service.")
+        if fileManager.fileExists(atPath: symlinkDestination.path) {
+            try? fileManager.removeItem(at: symlinkDestination)
+        }
+        print("[\u{001B}[32mOK\u{001B}[0m] Uninstalled SpaceTile service and app bundle.")
     }
 
     static func status() {
         let info = statusInfo()
+        let appExists = FileManager.default.fileExists(atPath: appURL.path)
+        let linkExists = FileManager.default.fileExists(atPath: symlinkDestination.path)
+        let plistExists = FileManager.default.fileExists(atPath: plistURL.path)
+        let trusted = WindowManager.canControlWindows()
+
         print("SpaceTile Status:")
-        print(" - Binary: \(FileManager.default.fileExists(atPath: binaryDestination.path) ? "Installed" : "Not installed")")
-        print(" - LaunchAgent: \(FileManager.default.fileExists(atPath: plistURL.path) ? "Registered" : "Missing")")
+        print(" - App Bundle:    \(appExists ? "\u{001B}[32mInstalled\u{001B}[0m (\(appURL.path))" : "\u{001B}[31mMissing\u{001B}[0m")")
+        print(" - CLI Symlink:   \(linkExists ? "\u{001B}[32mActive\u{001B}[0m (\(symlinkDestination.path))" : "\u{001B}[31mMissing\u{001B}[0m")")
+        print(" - LaunchAgent:   \(plistExists ? "\u{001B}[32mRegistered\u{001B}[0m" : "\u{001B}[31mMissing\u{001B}[0m")")
         if info.isRunning {
-            print(" - Service: \u{001B}[32mActive\u{001B}[0m (PID: \(info.pid ?? 0))")
+            print(" - Service:       \u{001B}[32mActive\u{001B}[0m (PID: \(info.pid ?? 0))")
         } else {
-            print(" - Service: \u{001B}[33mStopped\u{001B}[0m")
+            print(" - Service:       \u{001B}[33mStopped\u{001B}[0m")
         }
-        print(" - Accessibility: \(AXIsProcessTrusted() ? "Granted" : "Denied")")
+        print(" - Accessibility: \(trusted ? "\u{001B}[32mGranted\u{001B}[0m" : "\u{001B}[31mNot Granted\u{001B}[0m")")
     }
 
     static func start() {

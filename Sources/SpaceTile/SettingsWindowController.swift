@@ -35,6 +35,10 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             win.level = .floating // Stays on top when invoked
             win.delegate = self
 
+            if let icon = SettingsView.loadAppIcon() {
+                NSApp.applicationIconImage = icon
+            }
+
             self.window = win
             win.orderFrontRegardless()
             win.makeKeyAndOrderFront(nil)

@@ -153,10 +153,26 @@ struct SettingsView: View {
     @State private var currentWindows: [ManagedWindow] = []
     @State private var selectedTab: Int
     @State private var recordingField: String? = nil
-    @State private var isAccessibilityGranted: Bool = WindowManager.isAccessibilityGranted(prompt: false)
+    @State private var isAccessibilityGranted: Bool = WindowManager.canControlWindows()
     @State private var daemonStatus: (isRunning: Bool, pid: Int?) = ServiceInstaller.statusInfo()
     @State private var recentLogs: [String] = ServiceInstaller.getRecentLogs()
     @State private var localEventMonitor: Any? = nil
+
+    static func loadAppIcon() -> NSImage? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let paths = [
+            "\(home)/Applications/SpaceTile.app/Contents/Resources/AppIcon.png",
+            "\(home)/Code/spacetile/assets/AppIcon.png"
+        ]
+        for p in paths {
+            if let img = NSImage(contentsOfFile: p) { return img }
+        }
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "png"),
+           let img = NSImage(contentsOf: url) {
+            return img
+        }
+        return nil
+    }
 
     init(tabName: String? = nil) {
         let tab: Int
@@ -175,7 +191,16 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             // Header Bar
             HStack(spacing: 16) {
-                AnimatedTileVisualizer()
+                if let icon = SettingsView.loadAppIcon() {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 46, height: 46)
+                        .cornerRadius(10)
+                        .shadow(color: .cyan.opacity(0.35), radius: 4, x: 0, y: 2)
+                } else {
+                    AnimatedTileVisualizer()
+                }
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -593,6 +618,18 @@ struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.blue)
                     }
+
+                    Button(action: {
+                        checkStatus()
+                        if isAccessibilityGranted {
+                            showStatus("✓ Verified: Accessibility permissions are active!")
+                        } else {
+                            showStatus("❌ Missing: Please enable SpaceTile in System Settings.")
+                        }
+                    }) {
+                        Label("Verify", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
                 }
                 .padding(6)
             }
@@ -673,9 +710,18 @@ struct SettingsView: View {
             Spacer().frame(height: 8)
 
             HStack(spacing: 20) {
-                AnimatedTileVisualizer()
-                    .scaleEffect(1.2)
-                    .frame(width: 100, height: 75)
+                if let icon = SettingsView.loadAppIcon() {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 76, height: 76)
+                        .cornerRadius(16)
+                        .shadow(color: .cyan.opacity(0.4), radius: 6, x: 0, y: 3)
+                } else {
+                    AnimatedTileVisualizer()
+                        .scaleEffect(1.2)
+                        .frame(width: 100, height: 75)
+                }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("SpaceTile")
@@ -777,7 +823,7 @@ struct SettingsView: View {
 
     // MARK: - Helpers
     func checkStatus() {
-        let granted = WindowManager.isAccessibilityGranted(prompt: false)
+        let granted = WindowManager.canControlWindows()
         if granted != isAccessibilityGranted {
             isAccessibilityGranted = granted
             if granted {

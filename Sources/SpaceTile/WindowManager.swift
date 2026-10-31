@@ -39,8 +39,35 @@ class WindowManager {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    static func canControlWindows() -> Bool {
+        if isAccessibilityGranted(prompt: false) {
+            return true
+        }
+        // Direct probe 1: frontmost app window attribute
+        if let front = NSWorkspace.shared.frontmostApplication {
+            let appRef = AXUIElementCreateApplication(front.processIdentifier)
+            var winRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &winRef) == .success {
+                return true
+            }
+        }
+        // Direct probe 2: system-wide focused element
+        let sys = AXUIElementCreateSystemWide()
+        var focusedApp: CFTypeRef?
+        if AXUIElementCopyAttributeValue(sys, kAXFocusedApplicationAttribute as CFString, &focusedApp) == .success {
+            return true
+        }
+        return false
+    }
+
     static func ensureAccessibility(prompt: Bool = true) -> Bool {
-        return isAccessibilityGranted(prompt: prompt)
+        if canControlWindows() {
+            return true
+        }
+        if prompt {
+            _ = isAccessibilityGranted(prompt: true)
+        }
+        return canControlWindows()
     }
 
     func toggleLockForFocusedWindow() -> (locked: Bool, appName: String)? {
