@@ -33,7 +33,7 @@ fi
 
 echo ""
 echo "=================================================================="
-echo "🎉 SpaceTile v1.5.0 is successfully installed!"
+echo "🎉 SpaceTile v1.5.1 is successfully installed!"
 echo "=================================================================="
 echo " • App Bundle:   ~/Applications/SpaceTile.app"
 echo " • CLI Tool:     ~/.local/bin/spacetile"
