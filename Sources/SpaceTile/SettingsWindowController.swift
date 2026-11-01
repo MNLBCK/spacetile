@@ -22,8 +22,8 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             let contentView = SettingsView(tabName: initialTab)
             let hostingController = NSHostingController(rootView: contentView)
 
-            let winWidth: CGFloat = 880
-            let winHeight: CGFloat = 620
+            let winWidth: CGFloat = 940
+            let winHeight: CGFloat = 740
 
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: winWidth, height: winHeight),

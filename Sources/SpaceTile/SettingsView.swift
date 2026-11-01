@@ -289,6 +289,8 @@ struct LiveGridView: View {
         let boxH = relH * canvasH
 
         let isMaster = (index == 0)
+        let strokeColor = win.isLocked ? Color.orange.opacity(0.85) : (isMaster ? Color.cyan.opacity(0.85) : Color.primary.opacity(0.25))
+        let bgColor = isMaster ? Color.cyan.opacity(0.32) : Color(NSColor.controlAccentColor).opacity(0.20)
 
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 3) {
@@ -326,22 +328,10 @@ struct LiveGridView: View {
         }
         .padding(4)
         .frame(width: boxW, height: boxH)
-        .background(
-            isMaster
-                ? Color.cyan.opacity(0.32)
-                : Color(NSColor.controlAccentColor).opacity(0.20)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(
-                    win.isLocked
-                        ? Color.orange.opacity(0.85)
-                        : (isMaster ? Color.cyan.opacity(0.85) : Color.primary.opacity(0.25)),
-                    lineWidth: isMaster ? 1.5 : 1
-                )
-        )
+        .background(bgColor)
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: isMaster ? 1.5 : 1))
         .cornerRadius(4)
-        .offset(x: boxX, y: boxY)
+        .position(x: boxX + boxW / 2.0, y: boxY + boxH / 2.0)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             onSetMasterAndRearrange(win.id, win.appName)
@@ -500,8 +490,8 @@ struct SettingsView: View {
             Picker("", selection: $selectedTab) {
                 Text("Live Grid").tag(0)
                 Text("Shortcuts & Spacing").tag(1)
-                Text("Window Scores (1-100)").tag(2)
-                Text("Daemon & Logs").tag(3)
+                Text("Window Weights").tag(2)
+                Text("Daemon").tag(3)
                 Text("About SpaceTile").tag(4)
             }
             .pickerStyle(.segmented)
@@ -514,7 +504,7 @@ struct SettingsView: View {
                 switch selectedTab {
                 case 0: liveGridTab
                 case 1: shortcutsTab
-                case 2: windowScoresTab
+                case 2: windowWeightsTab
                 case 3: daemonTab
                 case 4: aboutTab
                 default: EmptyView()
@@ -558,7 +548,7 @@ struct SettingsView: View {
             .padding(.vertical, 10)
             .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
         }
-        .frame(width: 880, height: 620)
+        .frame(width: 940, height: 740)
         .onAppear {
             refreshData()
             checkStatus()
@@ -628,11 +618,16 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 8)
             } else {
-                VStack(spacing: 5) {
-                    ForEach(Array(currentWindows.prefix(4).enumerated()), id: \.element.id) { index, win in
-                        activeWindowRow(index: index, win: win)
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 6) {
+                        ForEach(Array(currentWindows.enumerated()), id: \.element.id) { index, win in
+                            activeWindowRow(index: index, win: win)
+                        }
                     }
+                    .padding(.vertical, 2)
+                    .padding(.trailing, 4)
                 }
+                .frame(maxHeight: 280)
             }
         }
     }
@@ -802,53 +797,64 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Tab 2: Window Scores (1-100) & Appetite
-    var windowScoresTab: some View {
+    // MARK: - Tab 2: Window Weights (Interactive Steppers & Appetite)
+    var windowWeightsTab: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Window Appetite Scores (1 - 100)")
+                    Text("App Appetite & Grid Weights")
                         .font(.headline)
-                    Text("Higher scores reserve more columns on the grid. Terminals stay focused (~32 score, max 1024px width), while Browsers & IDEs expand (~70-75 score).")
+                    Text("Influence how much space each application claims. Higher weights receive more columns (or master focus), while lower weights stay compact.")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 Spacer()
                 HStack(spacing: 8) {
-                    scoreBadge(label: "Compact (1-35)", color: .orange)
-                    scoreBadge(label: "Balanced (50)", color: .blue)
-                    scoreBadge(label: "Wide (70+)", color: .cyan)
+                    scoreBadge(label: "Compact (10-35)", color: .orange)
+                    scoreBadge(label: "Balanced (36-65)", color: .blue)
+                    scoreBadge(label: "Wide (66-100)", color: .cyan)
                 }
             }
 
-            VStack(spacing: 7) {
-                scoreAppCategoryCard(
+            // Category Level Quick Adjustments
+            VStack(spacing: 6) {
+                weightCategoryRow(
                     title: "Terminal Apps",
-                    apps: "iTerm2, Terminal, Ghostty, Kitty, Alacritty",
-                    score: 32,
-                    desc: "Capped to 3 columns on 10x6 4K grid (max 1024px width)",
+                    appsList: ["iTerm2", "Terminal", "Ghostty", "kitty", "Alacritty"],
+                    desc: "Capped to 3 columns on 10x6 4K grid (~1024px width)",
                     icon: "terminal"
                 )
-                scoreAppCategoryCard(
+                weightCategoryRow(
                     title: "Web Browsers",
-                    apps: "Google Chrome, Safari, Arc, Firefox",
-                    score: 72,
+                    appsList: ["Google Chrome", "Safari", "Arc", "Firefox"],
                     desc: "Claims 6-7 columns on 10x6 grid (2300px+)",
                     icon: "globe"
                 )
-                scoreAppCategoryCard(
+                weightCategoryRow(
                     title: "Code Editors",
-                    apps: "VS Code, Xcode, Cursor",
-                    score: 75,
+                    appsList: ["Code", "Xcode", "Cursor"],
                     desc: "Generous code viewing width for sidebars & split panes",
                     icon: "chevron.left.forwardslash.chevron.right"
                 )
-                scoreAppCategoryCard(
+                weightCategoryRow(
                     title: "Notes & Documents",
-                    apps: "Obsidian, Apple Notes, Bear",
-                    score: 50,
+                    appsList: ["Obsidian", "Notes", "Bear"],
                     desc: "Balanced reading column; 50/50 when paired with browser",
                     icon: "note.text"
                 )
+            }
+
+            // Fine-grained Individual App Weights List
+            GroupBox(label: Label("Fine-Grained App Rules", systemImage: "slider.horizontal.3")) {
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 4) {
+                        ForEach(config.appWeights) { appWeight in
+                            individualAppWeightRow(item: appWeight)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .padding(.trailing, 4)
+                }
+                .frame(maxHeight: 150)
             }
 
             GroupBox(label: Label("Smart Pairing Rules", systemImage: "link")) {
@@ -856,6 +862,153 @@ struct SettingsView: View {
                     .fontWeight(.medium)
             }
         }
+    }
+
+    private func weightCategoryRow(title: String, appsList: [String], desc: String, icon: String) -> some View {
+        let firstApp = appsList.first ?? ""
+        let currentScore = scoreFor(appName: firstApp)
+
+        return HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(.cyan)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(title).fontWeight(.semibold)
+                    Text("(\(appsList.joined(separator: ", ")))")
+                        .font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                }
+                Text(desc).font(.caption2).foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            // Interactive +/- Stepper Buttons
+            HStack(spacing: 6) {
+                Button(action: { adjustCategory(apps: appsList, delta: -5) }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.bordered)
+                .help("Decrease weight for \(title) by 5")
+
+                Text("\(currentScore)")
+                    .font(.system(.subheadline, design: .monospaced).bold())
+                    .frame(width: 36, alignment: .center)
+                    .foregroundColor(currentScore > 65 ? .cyan : (currentScore < 36 ? .orange : .blue))
+
+                Button(action: { adjustCategory(apps: appsList, delta: 5) }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.bordered)
+                .help("Increase weight for \(title) by 5")
+            }
+        }
+        .padding(7)
+        .background(Color.secondary.opacity(0.06))
+        .cornerRadius(8)
+    }
+
+    private func individualAppWeightRow(item: AppWeightConfig) -> some View {
+        HStack(spacing: 10) {
+            Text(item.appName)
+                .font(.caption.bold())
+                .frame(width: 140, alignment: .leading)
+
+            if let maxW = item.maxWidth {
+                Text("Max: \(Int(maxW))px")
+                    .font(.caption2.monospaced())
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Uncapped")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 5) {
+                Button(action: { adjustScore(for: item.appName, delta: -5) }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Text("\(item.score)")
+                    .font(.system(.caption, design: .monospaced).bold())
+                    .frame(width: 30, alignment: .center)
+                    .foregroundColor(item.score > 65 ? .cyan : (item.score < 36 ? .orange : .blue))
+
+                Button(action: { adjustScore(for: item.appName, delta: 5) }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.secondary.opacity(0.04))
+        .cornerRadius(4)
+    }
+
+    private func adjustScore(for appName: String, delta: Int) {
+        if let idx = config.appWeights.firstIndex(where: { $0.appName.lowercased() == appName.lowercased() }) {
+            config.appWeights[idx].score = max(10, min(100, config.appWeights[idx].score + delta))
+        } else {
+            let base = defaultScoreFor(appName: appName)
+            config.appWeights.append(AppWeightConfig(
+                appName: appName,
+                score: max(10, min(100, base + delta)),
+                minWidth: 500,
+                minHeight: 400
+            ))
+        }
+        config.save()
+        showStatus("Set weight for '\(appName)' to \(scoreFor(appName: appName)).")
+    }
+
+    private func adjustCategory(apps: [String], delta: Int) {
+        for app in apps {
+            if let idx = config.appWeights.firstIndex(where: { $0.appName.lowercased() == app.lowercased() }) {
+                config.appWeights[idx].score = max(10, min(100, config.appWeights[idx].score + delta))
+            } else {
+                let base = defaultScoreFor(appName: app)
+                config.appWeights.append(AppWeightConfig(
+                    appName: app,
+                    score: max(10, min(100, base + delta)),
+                    minWidth: 500,
+                    minHeight: 400
+                ))
+            }
+        }
+        config.save()
+        showStatus("Updated category weights by \(delta > 0 ? "+\(delta)" : "\(delta)").")
+    }
+
+    private func scoreFor(appName: String) -> Int {
+        if let item = config.appWeights.first(where: { $0.appName.lowercased() == appName.lowercased() }) {
+            return item.score
+        }
+        return defaultScoreFor(appName: appName)
+    }
+
+    private func defaultScoreFor(appName: String) -> Int {
+        let lower = appName.lowercased()
+        if lower.contains("term") || lower.contains("kitty") || lower.contains("alacritty") || lower.contains("ghostty") { return 32 }
+        if lower.contains("chrome") || lower.contains("safari") || lower.contains("firefox") || lower.contains("arc") { return 72 }
+        if lower.contains("code") || lower.contains("xcode") || lower.contains("cursor") { return 75 }
+        if lower.contains("notes") || lower.contains("obsidian") || lower.contains("bear") { return 50 }
+        return 50
     }
 
     private func scoreBadge(label: String, color: Color) -> some View {
@@ -867,54 +1020,48 @@ struct SettingsView: View {
             .cornerRadius(4)
     }
 
-    private func scoreAppCategoryCard(title: String, apps: String, score: Int, desc: String, icon: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 18))
-                .foregroundColor(.cyan)
-                .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(title).fontWeight(.semibold)
-                    Text("(\(apps))").font(.caption2).foregroundColor(.secondary).lineLimit(1)
-                }
-                Text(desc).font(.caption2).foregroundColor(.secondary)
-            }
-
-            Spacer()
-
-            Text("Score: \(score)")
-                .font(.system(.caption, design: .monospaced).bold())
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(score > 60 ? Color.blue.opacity(0.18) : Color.orange.opacity(0.18))
-                .foregroundColor(score > 60 ? .blue : .orange)
-                .cornerRadius(6)
-        }
-        .padding(8)
-        .background(Color.secondary.opacity(0.06))
-        .cornerRadius(8)
-    }
-
-    // MARK: - Tab 3: Daemon & Real-time Logs
+    // MARK: - Tab 3: Daemon (Space-Efficient Controls & Real-Time Logs)
     var daemonTab: some View {
         VStack(alignment: .leading, spacing: 10) {
-            GroupBox(label: Label("macOS System Permissions", systemImage: "hand.raised.fill")) {
+            // Streamlined, Space-Efficient Control Bar
+            GroupBox(label: Label("Daemon Status & Controls", systemImage: "bolt.horizontal.circle.fill")) {
                 HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(isAccessibilityGranted ? Color.green : Color.red)
-                                .frame(width: 9, height: 9)
-                            Text(isAccessibilityGranted ? "Accessibility Permission: Granted" : "Accessibility Permission: Missing")
-                                .fontWeight(.bold)
+                    // Accessibility Status
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(isAccessibilityGranted ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(isAccessibilityGranted ? "Accessibility: Granted" : "Accessibility: Missing")
+                                .font(.caption.bold())
+                            Text("macOS System Permissions")
+                                .font(.caption2).foregroundColor(.secondary)
                         }
-                        Text(isAccessibilityGranted ? "SpaceTile has full permission to detect window positions and arrange windows." : "Enable SpaceTile in System Settings -> Privacy & Security -> Accessibility.")
-                            .font(.caption).foregroundColor(.secondary)
+                    }
+
+                    Divider().frame(height: 24)
+
+                    // Daemon Process Status
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(daemonStatus.isRunning ? Color.green : Color.orange)
+                            .frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 4) {
+                                Text(daemonStatus.isRunning ? "Daemon: Running" : "Daemon: Stopped")
+                                    .font(.caption.bold())
+                                if let pid = daemonStatus.pid {
+                                    Text("(\(pid))").font(.caption2.monospaced()).foregroundColor(.secondary)
+                                }
+                            }
+                            Text("LaunchAgent (com.guppi.spacetile)")
+                                .font(.caption2).foregroundColor(.secondary)
+                        }
                     }
 
                     Spacer()
 
+                    // Quick Actions
                     Button("Open System Settings") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                             NSWorkspace.shared.open(url)
@@ -922,45 +1069,7 @@ struct SettingsView: View {
                         _ = WindowManager.isAccessibilityGranted(prompt: true)
                     }
                     .buttonStyle(.bordered)
-
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.selectFile("/Users/guppi/Applications/SpaceTile.app", inFileViewerRootedAtPath: "/Users/guppi/Applications")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button(action: {
-                        checkStatus()
-                        if isAccessibilityGranted {
-                            showStatus("✓ Verified: Accessibility permissions are active!")
-                        } else {
-                            showStatus("❌ Missing: Please enable SpaceTile in System Settings.")
-                        }
-                    }) {
-                        Label("Verify", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(5)
-            }
-
-            GroupBox(label: Label("Background Service Control", systemImage: "gearshape.2.fill")) {
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(daemonStatus.isRunning ? Color.green : Color.red)
-                                .frame(width: 9, height: 9)
-                            Text(daemonStatus.isRunning ? "Daemon is Running" : "Daemon is Stopped")
-                                .fontWeight(.bold)
-                            if let pid = daemonStatus.pid {
-                                Text("(PID: \(pid))").font(.caption.monospaced()).foregroundColor(.secondary)
-                            }
-                        }
-                        Text("Auto-starts at login via ~/Library/LaunchAgents/com.guppi.spacetile.plist")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-
-                    Spacer()
+                    .controlSize(.small)
 
                     Button("Restart Daemon") {
                         showStatus("Restarting daemon...")
@@ -968,12 +1077,15 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.cyan)
+                    .controlSize(.small)
 
                     if daemonStatus.isRunning {
                         Button("Stop") {
                             ServiceInstaller.stop()
                             checkStatus()
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .foregroundColor(.red)
                     } else {
                         Button("Start") {
@@ -981,12 +1093,13 @@ struct SettingsView: View {
                             checkStatus()
                         }
                         .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
                     }
                 }
-                .padding(5)
+                .padding(6)
             }
 
-            // Real-time macOS Terminal Log Frame
+            // Expanded Real-time macOS Terminal Log Frame (Fills Available Space Cleanly)
             VStack(spacing: 0) {
                 HStack {
                     HStack(spacing: 6) {
@@ -1031,11 +1144,11 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.vertical, 7)
                 .background(Color.black.opacity(0.85))
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
                         ForEach(recentLogs, id: \.self) { line in
                             Text(line)
                                 .font(.system(.caption2, design: .monospaced))
@@ -1043,11 +1156,12 @@ struct SettingsView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(10)
                 }
-                .frame(height: 140)
+                .frame(maxHeight: .infinity)
                 .background(Color.black.opacity(0.92))
             }
+            .frame(maxHeight: .infinity)
             .cornerRadius(8)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12), lineWidth: 1))
         }
