@@ -740,15 +740,46 @@ class WindowManager {
         // 3 Windows
         if count == 3 {
             let masterWin = windows[0]
-            let masterCols: Int
             if let fr = forcedRatio {
-                masterCols = max(2, min(totalCols - 2, Int(round(Double(totalCols) * fr))))
-            } else if masterWin.score <= 35 && is4K {
-                masterCols = 3
-            } else {
-                masterCols = is4K ? 6 : (totalCols * 6 / 10)
+                let masterCols = max(2, min(totalCols - 2, Int(round(Double(totalCols) * fr))))
+                let stackCols = totalCols - masterCols
+                let r0 = totalRows / 2
+                let r1 = totalRows - r0
+                resultFrames[0] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
+                resultFrames[1] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: r0)
+                resultFrames[2] = rectFor(col: masterCols, row: r0, colSpan: stackCols, rowSpan: r1)
+                return resultFrames
             }
 
+            if (masterWin.score <= 35 || masterWin.appName.lowercased().contains("term")) && is4K {
+                // 3 Equal-Width Columns with Master in the Center!
+                let colW = floor((workArea.width - 2 * gap) / 3.0)
+                let col0X = workArea.origin.x
+                let col1X = workArea.origin.x + colW + gap
+                let col2X = workArea.origin.x + 2 * (colW + gap)
+
+                // Master centered
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+
+                var sec = [1, 2]
+                let leftIdx: Int
+                if let bIdx = sec.first(where: {
+                    let app = windows[$0].appName.lowercased()
+                    return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
+                }) {
+                    leftIdx = bIdx
+                } else {
+                    leftIdx = sec[0]
+                }
+                sec.removeAll { $0 == leftIdx }
+                let rightIdx = sec[0]
+
+                resultFrames[leftIdx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                resultFrames[rightIdx] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                return resultFrames
+            }
+
+            let masterCols: Int = is4K ? 6 : (totalCols * 6 / 10)
             let stackCols = totalCols - masterCols
             let r0 = totalRows / 2
             let r1 = totalRows - r0
@@ -782,30 +813,9 @@ class WindowManager {
             resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(termW), height: floor(2 * cellH3 + gap))
 
             if count == 4 {
-                // Main secondary window gets top-right wide viewport (remW x 2/3 height)
-                resultFrames[1] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
-                // Bottom left under terminal
-                resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
-                // Bottom right under main secondary
-                resultFrames[3] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remW), height: floor(cellH3))
-                return resultFrames
-            }
-
-            if count == 5 {
-                // Secondary 0: wide top area (remW x 2/3 height)
-                resultFrames[1] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(remW), height: floor(2 * cellH3 + gap))
-                // Bottom left under terminal
-                resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
-                // Bottom two side-by-side
-                resultFrames[3] = CGRect(x: floor(col1X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
-                resultFrames[4] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(remColW), height: floor(cellH3))
-                return resultFrames
-            }
-
-            if count == 6 {
-                // 3 Equal-Width Columns:
-                // Top Tier (2/3 height): Left = Master, Middle = Browser, Right = Recent Secondary Terminal
-                // Bottom Tier (1/3 height): 3 Terminals side-by-side across the bottom
+                // 3 Equal-Width Columns with Master Centered:
+                // Top Tier (2/3 height): Left = Browser, Center = Master, Right = Terminal
+                // Bottom Tier (1/3 height): 1 Terminal centered under Master
                 let colW = floor((workArea.width - 2 * gap) / 3.0)
                 let topH = floor((workArea.height - gap) * (2.0 / 3.0))
                 let bottomH = workArea.height - gap - topH
@@ -817,12 +827,10 @@ class WindowManager {
                 let topY = workArea.origin.y
                 let bottomY = workArea.origin.y + topH + gap
 
-                // 1. Col 0 Top (Left, 2/3 height): Master window
-                resultFrames[0] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
+                // 1. Center Top: Master Window
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
 
-                var availableIndices = Array(1..<6)
-
-                // 2. Col 1 Top (Middle, 2/3 height): Browser or highest-scoring non-master window
+                var availableIndices = Array(1..<4)
                 let browserIdx: Int
                 if let bIdx = availableIndices.first(where: {
                     let app = windows[$0].appName.lowercased()
@@ -833,7 +841,100 @@ class WindowManager {
                     browserIdx = availableIndices[0]
                 }
                 availableIndices.removeAll { $0 == browserIdx }
-                resultFrames[browserIdx] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
+
+                // 2. Left Top: Browser
+                resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
+
+                // 3. Right Top: Active Secondary Terminal
+                let rightTopIdx = availableIndices.removeFirst()
+                resultFrames[rightTopIdx] = CGRect(x: floor(col2X), y: floor(topY), width: floor(colW), height: floor(topH))
+
+                // 4. Bottom Center under Master
+                let botIdx = availableIndices.removeFirst()
+                resultFrames[botIdx] = CGRect(x: floor(col1X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
+
+                return resultFrames
+            }
+
+            if count == 5 {
+                // 3 Equal-Width Columns with Master Centered:
+                // Top Tier (2/3 height): Left = Browser, Center = Master, Right = Terminal
+                // Bottom Tier (1/3 height): 2 Terminals split evenly across bottom width
+                let colW = floor((workArea.width - 2 * gap) / 3.0)
+                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+                let bottomH = workArea.height - gap - topH
+
+                let col0X = workArea.origin.x
+                let col1X = workArea.origin.x + colW + gap
+                let col2X = workArea.origin.x + 2 * (colW + gap)
+
+                let topY = workArea.origin.y
+                let bottomY = workArea.origin.y + topH + gap
+
+                // 1. Center Top: Master Window
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
+
+                var availableIndices = Array(1..<5)
+                let browserIdx: Int
+                if let bIdx = availableIndices.first(where: {
+                    let app = windows[$0].appName.lowercased()
+                    return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
+                }) {
+                    browserIdx = bIdx
+                } else {
+                    browserIdx = availableIndices[0]
+                }
+                availableIndices.removeAll { $0 == browserIdx }
+
+                // 2. Left Top: Browser
+                resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
+
+                // 3. Right Top: Active Secondary Terminal
+                let rightTopIdx = availableIndices.removeFirst()
+                resultFrames[rightTopIdx] = CGRect(x: floor(col2X), y: floor(topY), width: floor(colW), height: floor(topH))
+
+                // 4. Bottom Row: 2 windows split evenly across bottom width
+                let botW = floor((workArea.width - gap) / 2.0)
+                let bot0Idx = availableIndices.removeFirst()
+                let bot1Idx = availableIndices.removeFirst()
+                resultFrames[bot0Idx] = CGRect(x: floor(workArea.origin.x), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
+                resultFrames[bot1Idx] = CGRect(x: floor(workArea.origin.x + botW + gap), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
+
+                return resultFrames
+            }
+
+            if count == 6 {
+                // 3 Equal-Width Columns with Master Centered:
+                // Top Tier (2/3 height): Center = Master, Left = Browser, Right = Recent Secondary Terminal
+                // Bottom Tier (1/3 height): 3 Terminals side-by-side across the bottom (Left, Center, Right)
+                let colW = floor((workArea.width - 2 * gap) / 3.0)
+                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+                let bottomH = workArea.height - gap - topH
+
+                let col0X = workArea.origin.x
+                let col1X = workArea.origin.x + colW + gap
+                let col2X = workArea.origin.x + 2 * (colW + gap)
+
+                let topY = workArea.origin.y
+                let bottomY = workArea.origin.y + topH + gap
+
+                // 1. Col 1 Top (Center, 2/3 height): Master window (ergonomisch direkt mittig im Blickfeld!)
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
+
+                var availableIndices = Array(1..<6)
+
+                // 2. Col 0 Top (Left, 2/3 height): Browser or highest-scoring non-master window
+                let browserIdx: Int
+                if let bIdx = availableIndices.first(where: {
+                    let app = windows[$0].appName.lowercased()
+                    return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
+                }) {
+                    browserIdx = bIdx
+                } else {
+                    browserIdx = availableIndices[0]
+                }
+                availableIndices.removeAll { $0 == browserIdx }
+                resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
 
                 // 3. Col 2 Top (Right, 2/3 height): The most recently active secondary terminal
                 let rightTopIdx = availableIndices.removeFirst()
