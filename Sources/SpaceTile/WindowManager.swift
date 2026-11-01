@@ -451,9 +451,9 @@ class WindowManager {
             }
         }
 
-        // Apply learned ratio from SpaceMemory if not forced
+        // Apply learned ratio from SpaceMemory if not forced and if a master window is active
         var effectiveRatio = forcedRatio
-        if effectiveRatio == nil && config.enableSpaceLearning {
+        if effectiveRatio == nil && config.enableSpaceLearning && masterWindowID != nil {
             let appNames = Array(Set(tilingWindows.map { $0.appName })).sorted()
             let resKey = "\(Int(targetScreen.frame.width))x\(Int(targetScreen.frame.height))"
             if let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
@@ -511,7 +511,8 @@ class WindowManager {
             let countStr = floatingWindows.isEmpty ? "\(tilingWindows.count)" : "\(tilingWindows.count) tiled (\(floatingWindows.count) floating)"
             print("[\u{001B}[32mSpaceTile\u{001B}[0m] Arranged \(countStr) windows on '\(targetScreen.localizedName)'")
             for (i, win) in tilingWindows.enumerated() {
-                let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (i == 0 ? "\u{001B}[32m★ Master\u{001B}[0m" : "  Stack ")
+                let isMaster = (effectiveMasterID != nil && win.id == effectiveMasterID)
+                let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (isMaster ? "\u{001B}[32m★ Master\u{001B}[0m" : "  Tiled ")
                 let f = frames[i]
                 print(String(format: " %@[%@ (Score %d)] -> %dx%d @ (%d, %d)",
                              tag, win.appName, win.score, Int(f.width), Int(f.height), Int(f.origin.x), Int(f.origin.y)))
@@ -775,6 +776,13 @@ class WindowManager {
 
         // 2 Windows
         if count == 2 {
+            if masterWindowID == nil && forcedRatio == nil {
+                let halfW = floor((workArea.width - gap) / 2.0)
+                resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: halfW, height: floor(workArea.height))
+                resultFrames[1] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: halfW, height: floor(workArea.height))
+                return resultFrames
+            }
+
             let w0 = windows[0]
             let w1 = windows[1]
 
@@ -807,6 +815,15 @@ class WindowManager {
 
         // 3 Windows
         if count == 3 {
+            if masterWindowID == nil && forcedRatio == nil {
+                let colW = floor((workArea.width - 2 * gap) / 3.0)
+                for i in 0..<3 {
+                    let cx = workArea.origin.x + CGFloat(i) * (colW + gap)
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: colW, height: floor(workArea.height))
+                }
+                return resultFrames
+            }
+
             if let fr = forcedRatio {
                 let masterCols = max(2, min(totalCols - 2, Int(round(Double(totalCols) * fr))))
                 let stackCols = totalCols - masterCols
@@ -856,11 +873,77 @@ class WindowManager {
             return resultFrames
         }
 
-        // 4+ Windows: Use the 3x3 Signature Layout
+        // 4+ Windows
         let cellW3 = (workArea.width - 2 * gap) / 3.0
         let cellH3 = (workArea.height - 2 * gap) / 3.0
 
-        // On 4K/Ultrawide displays: Center Master in 3 equal-width columns (100% display utilization)
+        // Case A: Wenn KEIN Master-Fenster gesetzt ist (masterWindowID == nil) -> Gleichmäßiges, balanciertes Raster!
+        if masterWindowID == nil {
+            if count == 4 {
+                let halfW = floor((workArea.width - gap) / 2.0)
+                let halfH = floor((workArea.height - gap) / 2.0)
+                resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: halfW, height: halfH)
+                resultFrames[1] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: halfW, height: halfH)
+                resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + halfH + gap), width: halfW, height: halfH)
+                resultFrames[3] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y + halfH + gap), width: halfW, height: halfH)
+                return resultFrames
+            }
+            if count == 5 {
+                let halfH = floor((workArea.height - gap) / 2.0)
+                let topW = floor((workArea.width - 2 * gap) / 3.0)
+                let botW = floor((workArea.width - gap) / 2.0)
+                let botY = workArea.origin.y + halfH + gap
+                for i in 0..<3 {
+                    let cx = workArea.origin.x + CGFloat(i) * (topW + gap)
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: topW, height: halfH)
+                }
+                for i in 0..<2 {
+                    let cx = workArea.origin.x + CGFloat(i) * (botW + gap)
+                    resultFrames[3 + i] = CGRect(x: floor(cx), y: floor(botY), width: botW, height: halfH)
+                }
+                return resultFrames
+            }
+            if count == 6 {
+                let colW = floor((workArea.width - 2 * gap) / 3.0)
+                let halfH = floor((workArea.height - gap) / 2.0)
+                for i in 0..<6 {
+                    let c = i % 3
+                    let r = i / 3
+                    let cx = workArea.origin.x + CGFloat(c) * (colW + gap)
+                    let cy = workArea.origin.y + CGFloat(r) * (halfH + gap)
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: colW, height: halfH)
+                }
+                return resultFrames
+            }
+            if count == 7 || count == 8 {
+                let colW = floor((workArea.width - 3 * gap) / 4.0)
+                let halfH = floor((workArea.height - gap) / 2.0)
+                for i in 0..<count {
+                    let c = i % 4
+                    let r = i / 4
+                    let cx = workArea.origin.x + CGFloat(c) * (colW + gap)
+                    let cy = workArea.origin.y + CGFloat(r) * (halfH + gap)
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: colW, height: halfH)
+                }
+                return resultFrames
+            }
+            if count >= 9 {
+                let cols = 3
+                let rows = Int(ceil(Double(count) / 3.0))
+                let colW = floor((workArea.width - CGFloat(cols - 1) * gap) / CGFloat(cols))
+                let rowH = floor((workArea.height - CGFloat(rows - 1) * gap) / CGFloat(rows))
+                for i in 0..<count {
+                    let c = i % cols
+                    let r = i / cols
+                    let cx = workArea.origin.x + CGFloat(c) * (colW + gap)
+                    let cy = workArea.origin.y + CGFloat(r) * (rowH + gap)
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: colW, height: rowH)
+                }
+                return resultFrames
+            }
+        }
+
+        // Case B: Master-Layout auf 4K/Ultrawide (Master zentriert in Spalte 1, 2/3 Höhe)
         if is4K {
             let colW = floor((workArea.width - 2 * gap) / 3.0)
             let topH = floor((workArea.height - gap) * (2.0 / 3.0))

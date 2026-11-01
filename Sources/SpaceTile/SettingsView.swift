@@ -154,6 +154,7 @@ struct AnimatedTileVisualizer: View {
 // MARK: - Live Grid Interactive Visualizer (Exact Usable Aspect Ratio, Real Windows, Semi-Transparent, Drag & Drop Swap, Double-Click Master)
 struct LiveGridView: View {
     let windows: [ManagedWindow]
+    let masterWindowID: CGWindowID?
     let onSetMasterAndRearrange: (CGWindowID, String) -> Void
     let onClearMaster: () -> Void
     let onToggleLock: (CGWindowID) -> Void
@@ -336,7 +337,7 @@ struct LiveGridView: View {
         let boxW = relW * canvasW
         let boxH = relH * canvasH
 
-        let isMaster = (index == 0)
+        let isMaster = (masterWindowID != nil && win.id == masterWindowID)
         let isBeingDragged = (draggedWindowID == win.id)
         let isDropTarget = (hoveredDropTargetID == win.id)
 
@@ -381,16 +382,20 @@ struct LiveGridView: View {
         .zIndex(isBeingDragged ? 999 : (isDropTarget ? 500 : Double(100 - index)))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            onSetMasterAndRearrange(win.id, win.appName)
+            if isMaster {
+                onClearMaster()
+            } else {
+                onSetMasterAndRearrange(win.id, win.appName)
+            }
         }
         .contextMenu {
-            if !isMaster && !win.isLocked && !win.isFloating {
+            if isMaster {
+                Button("Master aufheben (Darstellung ohne Master)") {
+                    onClearMaster()
+                }
+            } else if !win.isLocked && !win.isFloating {
                 Button("Set as Master Window") {
                     onSetMasterAndRearrange(win.id, win.appName)
-                }
-            } else if isMaster {
-                Button("Reset to Automatic Scoring") {
-                    onClearMaster()
                 }
             }
             if !win.isFloating {
@@ -453,6 +458,7 @@ struct SettingsView: View {
     @State private var config: Config = Config.load()
     @State private var statusMessage: String?
     @State private var currentWindows: [ManagedWindow] = []
+    @State private var currentMasterID: CGWindowID? = WindowManager.shared.masterWindowID
     @State private var selectedTab: Int
     @State private var recordingField: String? = nil
     @State private var isAccessibilityGranted: Bool = WindowManager.canControlWindows()
@@ -541,16 +547,16 @@ struct SettingsView: View {
                         .clipShape(Capsule())
                 }
 
-                // Prominently Taller Rearrange Now Button (Primary Action)
+                // Prominently Taller Rearrange Now Button (60px Height)
                 Button(action: triggerOptimizeNow) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: 18, weight: .bold))
                         Text("Rearrange Now")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: 16, weight: .bold))
                     }
-                    .frame(height: 44)
-                    .padding(.horizontal, 18)
+                    .frame(height: 60)
+                    .padding(.horizontal, 22)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -733,6 +739,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             LiveGridView(
                 windows: currentWindows,
+                masterWindowID: currentMasterID,
                 onSetMasterAndRearrange: { winID, appName in
                     promoteToMaster(id: winID, appName: appName)
                 },
@@ -819,7 +826,8 @@ struct SettingsView: View {
     }
 
     private func activeWindowRow(index: Int, win: ManagedWindow) -> some View {
-        HStack(spacing: 8) {
+        let isMaster = (currentMasterID != nil && win.id == currentMasterID)
+        return HStack(spacing: 8) {
             // 1. App Name (fixed 125px)
             Text(win.appName)
                 .font(.subheadline.bold())
@@ -842,7 +850,7 @@ struct SettingsView: View {
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.orange.opacity(0.18))
                         .cornerRadius(4)
-                } else if index == 0 {
+                } else if isMaster {
                     Text("★ Master")
                         .font(.caption2.bold())
                         .foregroundColor(.green)
@@ -924,16 +932,22 @@ struct SettingsView: View {
                     Spacer().frame(width: 65)
                 }
 
-                if index == 0 || win.id == WindowManager.shared.masterWindowID {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.green)
+                if isMaster {
+                    Button(action: {
+                        clearMaster()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .heavy))
+                            Text("Master")
+                                .font(.caption2.bold())
+                        }
                     }
-                    .frame(width: 72, height: 22)
-                    .background(Color.green.opacity(0.12))
-                    .cornerRadius(5)
-                    .help("Aktives Master-Fenster")
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .controlSize(.small)
+                    .frame(width: 78)
+                    .help("Klicken, um Master-Status aufzuheben (Darstellung ohne Master)")
                 } else if !win.isLocked && !win.isFloating {
                     Button("Set Master") {
                         promoteToMaster(id: win.id, appName: win.appName)
@@ -941,21 +955,25 @@ struct SettingsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.cyan)
                     .controlSize(.small)
-                    .frame(width: 72)
+                    .frame(width: 78)
                 } else {
-                    Spacer().frame(width: 72)
+                    Spacer().frame(width: 78)
                 }
             }
             .frame(width: 215, alignment: .trailing)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.secondary.opacity(index == 0 ? 0.12 : 0.05))
+        .background(Color.secondary.opacity(isMaster ? 0.12 : 0.05))
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            if !win.isLocked && index != 0 {
-                promoteToMaster(id: win.id, appName: win.appName)
+            if !win.isLocked && !win.isFloating {
+                if isMaster {
+                    clearMaster()
+                } else {
+                    promoteToMaster(id: win.id, appName: win.appName)
+                }
             }
         }
     }
@@ -1946,6 +1964,10 @@ struct SettingsView: View {
 
     func refreshData() {
         checkStatus()
+        WindowManager.shared.reloadMasterWindowID()
+        WindowManager.shared.reloadLockedWindowIDs()
+        WindowManager.shared.reloadFloatingWindowIDs()
+        currentMasterID = WindowManager.shared.masterWindowID
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let vf = screen.visibleFrame
         let primaryH = NSScreen.screens.first?.frame.height ?? vf.height
@@ -1965,6 +1987,7 @@ struct SettingsView: View {
     }
 
     func promoteToMaster(id: CGWindowID, appName: String) {
+        currentMasterID = id
         if let idx = currentWindows.firstIndex(where: { $0.id == id }) {
             withAnimation(.easeInOut(duration: 0.25)) {
                 let chosen = currentWindows.remove(at: idx)
@@ -1981,7 +2004,8 @@ struct SettingsView: View {
     }
 
     func clearMaster() {
-        showStatus("Reset Master to automatic scoring & rearranging...")
+        currentMasterID = nil
+        showStatus("Master aufgehoben – Anordnung im gleichmäßigen Raster...")
         DispatchQueue.global(qos: .userInitiated).async {
             WindowManager.shared.clearMasterWindow()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
