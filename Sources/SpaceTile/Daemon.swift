@@ -22,6 +22,7 @@ class Daemon {
         print(" * Rearrange:      \(config.shortcut.displayString)")
         print(" * Set as Master:  \(config.masterShortcut.displayString)")
         print(" * Lock/Unlock:    \(config.lockShortcut.displayString)")
+        print(" * Toggle Float:   \(config.floatShortcut.displayString)")
         print(" * Settings GUI:   \(config.guiShortcut.displayString)")
         print("-----------------------------------------------------------------")
 
@@ -43,6 +44,11 @@ class Daemon {
         HotKeyManager.shared.onToggleLockTriggered = {
             print("[\(timeFormatter.string(from: Date()))] Shortcut triggered -> Toggling lock for focused window...")
             _ = WindowManager.shared.toggleLockForFocusedWindow()
+        }
+
+        HotKeyManager.shared.onToggleFloatTriggered = {
+            print("[\(timeFormatter.string(from: Date()))] Shortcut triggered -> Toggling float (always on top) for focused window...")
+            _ = WindowManager.shared.toggleFloatForFocusedWindow()
         }
 
         guard HotKeyManager.shared.register(config: config) else {

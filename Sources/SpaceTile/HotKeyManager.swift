@@ -11,6 +11,7 @@ class HotKeyManager {
     var onGUITriggered: (() -> Void)?
     var onSetMasterTriggered: (() -> Void)?
     var onToggleLockTriggered: (() -> Void)?
+    var onToggleFloatTriggered: (() -> Void)?
 
     func register(config: Config) -> Bool {
         unregister()
@@ -38,6 +39,7 @@ class HotKeyManager {
                 case 2: HotKeyManager.shared.onGUITriggered?()
                 case 3: HotKeyManager.shared.onSetMasterTriggered?()
                 case 4: HotKeyManager.shared.onToggleLockTriggered?()
+                case 5: HotKeyManager.shared.onToggleFloatTriggered?()
                 default: break
                 }
             }
@@ -66,6 +68,8 @@ class HotKeyManager {
         registerSingle(config.masterShortcut, id: 3, name: "Set as Master")
         // 4. Toggle Lock (ID 4)
         registerSingle(config.lockShortcut, id: 4, name: "Toggle Lock")
+        // 5. Toggle Float (ID 5)
+        registerSingle(config.floatShortcut, id: 5, name: "Toggle Float")
 
         return true
     }

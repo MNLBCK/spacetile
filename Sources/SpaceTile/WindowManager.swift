@@ -13,6 +13,7 @@ struct ManagedWindow {
     let isFocused: Bool
     let zOrder: Int
     var isLocked: Bool
+    var isFloating: Bool
     var currentFrame: CGRect
     var score: Int
     var minWidth: Double
@@ -25,12 +26,18 @@ class WindowManager {
 
     private let stateLock = NSLock()
     private(set) var lockedWindowIDs: Set<CGWindowID> = []
+    private(set) var floatingWindowIDs: Set<CGWindowID> = []
     private(set) var masterWindowID: CGWindowID?
     private var lastRunTime: Date?
 
     static var lockedStoreURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".config/spacetile/locked_windows.json")
+    }
+
+    static var floatingStoreURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".config/spacetile/floating_windows.json")
     }
 
     static var masterStoreURL: URL {
@@ -40,6 +47,7 @@ class WindowManager {
 
     init() {
         reloadLockedWindowIDs()
+        reloadFloatingWindowIDs()
         reloadMasterWindowID()
     }
 
@@ -133,6 +141,60 @@ class WindowManager {
         persistLockedWindowIDs()
     }
 
+    func reloadFloatingWindowIDs() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard FileManager.default.fileExists(atPath: WindowManager.floatingStoreURL.path),
+              let data = try? Data(contentsOf: WindowManager.floatingStoreURL),
+              let list = try? JSONDecoder().decode([UInt32].self, from: data) else {
+            self.floatingWindowIDs = []
+            return
+        }
+        self.floatingWindowIDs = Set(list.map { CGWindowID($0) })
+    }
+
+    func persistFloatingWindowIDs() {
+        stateLock.lock()
+        let list = Array(floatingWindowIDs).map { UInt32($0) }
+        stateLock.unlock()
+
+        let url = WindowManager.floatingStoreURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(list) {
+            try? data.write(to: url, options: .atomic)
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.floatingChanged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+    }
+
+    func setWindowFloating(id: CGWindowID, floating: Bool) {
+        reloadFloatingWindowIDs()
+        let cid = WindowManager.CGSMainConnectionID()
+        if floating {
+            // Floating windows are not locked in grid
+            if lockedWindowIDs.contains(id) {
+                lockedWindowIDs.remove(id)
+                persistLockedWindowIDs()
+            }
+            floatingWindowIDs.insert(id)
+            _ = WindowManager.CGSSetWindowLevel(cid, id, 3)
+        } else {
+            floatingWindowIDs.remove(id)
+            _ = WindowManager.CGSSetWindowLevel(cid, id, 0)
+        }
+        persistFloatingWindowIDs()
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+    }
+
     static func isAccessibilityGranted(prompt: Bool = false) -> Bool {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
@@ -195,6 +257,52 @@ class WindowManager {
         }
     }
 
+    @discardableResult
+    func toggleFloatForFocusedWindow() -> (floating: Bool, appName: String)? {
+        reloadFloatingWindowIDs()
+        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
+        let appRef = AXUIElementCreateApplication(front.processIdentifier)
+        var winRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+              let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() else { return nil }
+
+        var winID: CGWindowID = 0
+        guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return nil }
+
+        let appName = front.localizedName ?? "App"
+        let cid = WindowManager.CGSMainConnectionID()
+        if floatingWindowIDs.contains(winID) {
+            floatingWindowIDs.remove(winID)
+            persistFloatingWindowIDs()
+            _ = WindowManager.CGSSetWindowLevel(cid, winID, 0)
+            print("[\u{001B}[33mSpaceTile\u{001B}[0m] Un-floated window for '\(appName)' (ID: \(winID)) -> Returns to standard grid tiling.")
+            DistributedNotificationCenter.default().postNotificationName(
+                NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
+            return (false, appName)
+        } else {
+            if lockedWindowIDs.contains(winID) {
+                lockedWindowIDs.remove(winID)
+                persistLockedWindowIDs()
+            }
+            floatingWindowIDs.insert(winID)
+            persistFloatingWindowIDs()
+            _ = WindowManager.CGSSetWindowLevel(cid, winID, 3)
+            AXUIElementPerformAction(win as! AXUIElement, kAXRaiseAction as CFString)
+            print("[\u{001B}[35mSpaceTile\u{001B}[0m] Floated window for '\(appName)' (ID: \(winID)) -> Stays on top & excluded from tiling.")
+            DistributedNotificationCenter.default().postNotificationName(
+                NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
+            return (true, appName)
+        }
+    }
+
     func setFocusedAsMaster() -> Bool {
         guard let front = NSWorkspace.shared.frontmostApplication else { return false }
         if front.processIdentifier == ProcessInfo.processInfo.processIdentifier || front.localizedName == "SpaceTile" {
@@ -242,17 +350,33 @@ class WindowManager {
         let workArea = axVisibleRect.insetBy(dx: config.margin, dy: config.margin)
         guard workArea.width > 200 && workArea.height > 200 else { return false }
 
-        var windows = collectWindowsOnCurrentSpace(screenBounds: axVisibleRect, ignoredApps: Set(config.ignoredApps), config: config)
+        let windows = collectWindowsOnCurrentSpace(screenBounds: axVisibleRect, ignoredApps: Set(config.ignoredApps), config: config)
         if windows.isEmpty {
             if verbose { print("[\u{001B}[33mINFO\u{001B}[0m] No active windows in current Space.") }
             return true
         }
 
-        // Handle forced master or active master
+        // Separate floating windows: they stay on top and are ignored by tiling engine
+        let floatingWindows = windows.filter { $0.isFloating }
+        var tilingWindows = windows.filter { !$0.isFloating }
+
+        if tilingWindows.isEmpty {
+            if verbose { print("[\u{001B}[33mINFO\u{001B}[0m] All active windows on current space are floating.") }
+            let cid = WindowManager.CGSMainConnectionID()
+            for fWin in floatingWindows {
+                if let elem = fWin.element {
+                    AXUIElementPerformAction(elem, kAXRaiseAction as CFString)
+                }
+                _ = WindowManager.CGSSetWindowLevel(cid, fWin.id, 3)
+            }
+            return true
+        }
+
+        // Handle forced master or active master on tiling windows
         let effectiveMasterID = forcedMasterID ?? masterWindowID
-        if let fid = effectiveMasterID, let idx = windows.firstIndex(where: { $0.id == fid }) {
-            let chosen = windows.remove(at: idx)
-            windows.insert(chosen, at: 0)
+        if let fid = effectiveMasterID, let idx = tilingWindows.firstIndex(where: { $0.id == fid }) {
+            let chosen = tilingWindows.remove(at: idx)
+            tilingWindows.insert(chosen, at: 0)
             if masterWindowID != fid {
                 masterWindowID = fid
                 persistMasterWindowID()
@@ -262,7 +386,7 @@ class WindowManager {
         // Apply learned ratio from SpaceMemory if not forced
         var effectiveRatio = forcedRatio
         if effectiveRatio == nil && config.enableSpaceLearning {
-            let appNames = Array(Set(windows.map { $0.appName })).sorted()
+            let appNames = Array(Set(tilingWindows.map { $0.appName })).sorted()
             let resKey = "\(Int(targetScreen.frame.width))x\(Int(targetScreen.frame.height))"
             if let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
                let learned = profile.learnedMasterRatio {
@@ -275,7 +399,7 @@ class WindowManager {
 
         // Calculate layout with Grid & Scoring Engine (with strict tile reservation for locked windows)
         let frames = calculateGridScoringLayout(
-            windows: windows,
+            windows: tilingWindows,
             workArea: workArea,
             screen: targetScreen,
             config: config,
@@ -285,7 +409,7 @@ class WindowManager {
         // Apply frames
         if config.animationMode == "smooth" && config.animationDuration > 0.02 {
             var moves: [(element: AXUIElement, start: CGRect, target: CGRect)] = []
-            for (i, win) in windows.enumerated() {
+            for (i, win) in tilingWindows.enumerated() {
                 if win.isLocked { continue }
                 if let elem = win.element {
                     moves.append((element: elem, start: win.currentFrame, target: frames[i]))
@@ -298,7 +422,7 @@ class WindowManager {
                 freezeContent: config.freezeContentDuringResize
             )
         } else {
-            for (i, win) in windows.enumerated() {
+            for (i, win) in tilingWindows.enumerated() {
                 if win.isLocked { continue }
                 if let elem = win.element {
                     setWindowFrameImmediate(elem, target: frames[i])
@@ -306,13 +430,28 @@ class WindowManager {
             }
         }
 
+        // Ensure all floating windows remain pinned on top in the foreground
+        let cid = WindowManager.CGSMainConnectionID()
+        for fWin in floatingWindows {
+            if let elem = fWin.element {
+                AXUIElementPerformAction(elem, kAXRaiseAction as CFString)
+            }
+            _ = WindowManager.CGSSetWindowLevel(cid, fWin.id, 3)
+        }
+
         if verbose {
-            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Arranged \(windows.count) windows on '\(targetScreen.localizedName)'")
-            for (i, win) in windows.enumerated() {
+            let countStr = floatingWindows.isEmpty ? "\(tilingWindows.count)" : "\(tilingWindows.count) tiled (\(floatingWindows.count) floating)"
+            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Arranged \(countStr) windows on '\(targetScreen.localizedName)'")
+            for (i, win) in tilingWindows.enumerated() {
                 let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (i == 0 ? "\u{001B}[32m★ Master\u{001B}[0m" : "  Stack ")
                 let f = frames[i]
                 print(String(format: " %@[%@ (Score %d)] -> %dx%d @ (%d, %d)",
                              tag, win.appName, win.score, Int(f.width), Int(f.height), Int(f.origin.x), Int(f.origin.y)))
+            }
+            for fWin in floatingWindows {
+                let f = fWin.currentFrame
+                print(String(format: "  \u{001B}[35m✈ Float \u{001B}[0m[%@ (Score %d)] -> %dx%d @ (%d, %d) [Always on Top]",
+                             fWin.appName, fWin.score, Int(f.width), Int(f.height), Int(f.origin.x), Int(f.origin.y)))
             }
         }
 
@@ -803,11 +942,12 @@ class WindowManager {
         return resultFrames
     }
 
-    // Private SkyLight SPIs for atomic display compositor updates
+    // Private SkyLight SPIs for atomic display compositor updates & window floating levels
     typealias CGSConnectionID = UInt32
-    @_silgen_name("CGSMainConnectionID") private static func CGSMainConnectionID() -> CGSConnectionID
+    @_silgen_name("CGSMainConnectionID") static func CGSMainConnectionID() -> CGSConnectionID
     @_silgen_name("CGSDisableUpdate") private static func CGSDisableUpdate(_ cid: CGSConnectionID) -> Int32
     @_silgen_name("CGSReenableUpdate") private static func CGSReenableUpdate(_ cid: CGSConnectionID) -> Int32
+    @_silgen_name("CGSSetWindowLevel") static func CGSSetWindowLevel(_ cid: CGSConnectionID, _ wid: UInt32, _ level: Int32) -> Int32
 
     private func animateWindowsSmooth(
         moves: [(element: AXUIElement, start: CGRect, target: CGRect)],
@@ -932,19 +1072,25 @@ class WindowManager {
 
     func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>, config: Config) -> [ManagedWindow] {
         reloadLockedWindowIDs()
+        reloadFloatingWindowIDs()
         reloadMasterWindowID()
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let cgWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
 
-        // Clean up stale locked window IDs from closed windows
+        // Clean up stale locked and floating window IDs from closed windows
         let allWins = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         let allIDs = Set(allWins.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
         let deadIDs = lockedWindowIDs.subtracting(allIDs)
         if !deadIDs.isEmpty {
             lockedWindowIDs.subtract(deadIDs)
             persistLockedWindowIDs()
+        }
+        let deadFloatIDs = floatingWindowIDs.subtracting(allIDs)
+        if !deadFloatIDs.isEmpty {
+            floatingWindowIDs.subtract(deadFloatIDs)
+            persistFloatingWindowIDs()
         }
         if let mid = masterWindowID, !allIDs.contains(mid) {
             masterWindowID = nil
@@ -1036,6 +1182,7 @@ class WindowManager {
 
                 let isFocused = (winID == focusedWindowID)
                 let isLocked = lockedWindowIDs.contains(winID)
+                let isFloating = floatingWindowIDs.contains(winID)
                 let currentFrame = getWindowFrame(win) ?? info.bounds
 
                 // Scoring lookup
@@ -1053,6 +1200,7 @@ class WindowManager {
                     isFocused: isFocused,
                     zOrder: info.order,
                     isLocked: isLocked,
+                    isFloating: isFloating,
                     currentFrame: currentFrame,
                     score: score,
                     minWidth: minW,
@@ -1062,9 +1210,9 @@ class WindowManager {
             }
         }
 
-        // Add any remaining on-screen windows that weren't matched via AX only if locked (to reserve their tiles)
+        // Add any remaining on-screen windows that weren't matched via AX only if locked or floating
         for (winID, info) in onScreenMap {
-            if !matchedIDs.contains(winID) && lockedWindowIDs.contains(winID) {
+            if !matchedIDs.contains(winID) && (lockedWindowIDs.contains(winID) || floatingWindowIDs.contains(winID)) {
                 let weightConfig = config.appWeights.first(where: { $0.appName.lowercased() == info.owner.lowercased() })
                 let score = weightConfig?.score ?? defaultScoreFor(appName: info.owner)
                 let minW = weightConfig?.minWidth ?? 450
@@ -1078,7 +1226,8 @@ class WindowManager {
                     title: info.title,
                     isFocused: (winID == focusedWindowID),
                     zOrder: info.order,
-                    isLocked: true,
+                    isLocked: lockedWindowIDs.contains(winID),
+                    isFloating: floatingWindowIDs.contains(winID),
                     currentFrame: info.bounds,
                     score: score,
                     minWidth: minW,

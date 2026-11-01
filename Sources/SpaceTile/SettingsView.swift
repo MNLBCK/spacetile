@@ -157,6 +157,7 @@ struct LiveGridView: View {
     let onSetMasterAndRearrange: (CGWindowID, String) -> Void
     let onClearMaster: () -> Void
     let onToggleLock: (CGWindowID) -> Void
+    let onToggleFloat: (CGWindowID) -> Void
     let onSwapWindows: (CGWindowID, CGWindowID) -> Void
 
     @State private var draggedWindowID: CGWindowID? = nil
@@ -281,6 +282,44 @@ struct LiveGridView: View {
         }
     }
 
+    private func windowBoxHeader(win: ManagedWindow, isMaster: Bool, isDropTarget: Bool) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(Color.red.opacity(0.85)).frame(width: 5, height: 5)
+            Circle().fill(Color.orange.opacity(0.85)).frame(width: 5, height: 5)
+            Circle().fill(Color.green.opacity(0.85)).frame(width: 5, height: 5)
+
+            Text(win.appName)
+                .font(.system(size: 9, weight: .bold))
+                .lineLimit(1)
+
+            Spacer()
+
+            if isDropTarget {
+                Image(systemName: "arrow.triangle.swap")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+            } else if win.isFloating {
+                Text("✈ FLOAT")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 3).padding(.vertical, 1)
+                    .background(Color.purple.opacity(0.35))
+                    .foregroundColor(.purple)
+                    .cornerRadius(2)
+            } else if win.isLocked {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(.orange)
+            } else if isMaster {
+                Text("★ MASTER")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 3).padding(.vertical, 1)
+                    .background(Color.cyan.opacity(0.35))
+                    .foregroundColor(.cyan)
+                    .cornerRadius(2)
+            }
+        }
+    }
+
     private func windowBox(index: Int, win: ManagedWindow, canvasW: CGFloat, canvasH: CGFloat) -> some View {
         let rawX = (win.currentFrame.origin.x - axRect.origin.x) / axRect.width
         let rawY = (win.currentFrame.origin.y - axRect.origin.y) / axRect.height
@@ -304,6 +343,7 @@ struct LiveGridView: View {
         let strokeColor: Color = {
             if isDropTarget { return Color.cyan }
             if isBeingDragged { return Color.white }
+            if win.isFloating { return Color.purple.opacity(0.85) }
             if win.isLocked { return Color.orange.opacity(0.85) }
             if isMaster { return Color.cyan.opacity(0.85) }
             return Color.primary.opacity(0.25)
@@ -312,6 +352,7 @@ struct LiveGridView: View {
         let bgColor: Color = {
             if isDropTarget { return Color.cyan.opacity(0.48) }
             if isBeingDragged { return Color.cyan.opacity(0.40) }
+            if win.isFloating { return Color.purple.opacity(0.30) }
             if isMaster { return Color.cyan.opacity(0.32) }
             return Color(NSColor.controlAccentColor).opacity(0.20)
         }()
@@ -320,34 +361,7 @@ struct LiveGridView: View {
         let curY = isBeingDragged ? (boxY + dragTranslation.height) : boxY
 
         return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 3) {
-                Circle().fill(Color.red.opacity(0.85)).frame(width: 5, height: 5)
-                Circle().fill(Color.orange.opacity(0.85)).frame(width: 5, height: 5)
-                Circle().fill(Color.green.opacity(0.85)).frame(width: 5, height: 5)
-
-                Text(win.appName)
-                    .font(.system(size: 9, weight: .bold))
-                    .lineLimit(1)
-
-                Spacer()
-
-                if isDropTarget {
-                    Image(systemName: "arrow.triangle.swap")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.white)
-                } else if win.isLocked {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(.orange)
-                } else if isMaster {
-                    Text("★ MASTER")
-                        .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 3).padding(.vertical, 1)
-                        .background(Color.cyan.opacity(0.35))
-                        .foregroundColor(.cyan)
-                        .cornerRadius(2)
-                }
-            }
+            windowBoxHeader(win: win, isMaster: isMaster, isDropTarget: isDropTarget)
 
             if boxH > 35 && !win.title.isEmpty {
                 Text(win.title)
@@ -370,7 +384,7 @@ struct LiveGridView: View {
             onSetMasterAndRearrange(win.id, win.appName)
         }
         .contextMenu {
-            if !isMaster && !win.isLocked {
+            if !isMaster && !win.isLocked && !win.isFloating {
                 Button("Set as Master Window") {
                     onSetMasterAndRearrange(win.id, win.appName)
                 }
@@ -379,8 +393,13 @@ struct LiveGridView: View {
                     onClearMaster()
                 }
             }
-            Button(win.isLocked ? "Unlock Position" : "Lock Position") {
-                onToggleLock(win.id)
+            if !win.isFloating {
+                Button(win.isLocked ? "Unlock Position" : "Lock Position") {
+                    onToggleLock(win.id)
+                }
+            }
+            Button(win.isFloating ? "Unpin (Return to Grid)" : "Float Window (Always on Top)") {
+                onToggleFloat(win.id)
             }
         }
         .gesture(
@@ -721,6 +740,11 @@ struct SettingsView: View {
                     WindowManager.shared.setWindowLocked(id: winID, locked: !isLocked)
                     refreshData()
                 },
+                onToggleFloat: { winID in
+                    let isFloat = WindowManager.shared.floatingWindowIDs.contains(winID)
+                    WindowManager.shared.setWindowFloating(id: winID, floating: !isFloat)
+                    refreshData()
+                },
                 onSwapWindows: { idA, idB in
                     swapWindows(idA: idA, idB: idB)
                 }
@@ -765,7 +789,14 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(win.appName).fontWeight(.bold)
-                    if win.isLocked {
+                    if win.isFloating {
+                        Text("✈ Floating")
+                            .font(.caption2.bold())
+                            .foregroundColor(.purple)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Color.purple.opacity(0.15))
+                            .cornerRadius(4)
+                    } else if win.isLocked {
                         Text("🔒 Locked")
                             .font(.caption2.bold())
                             .foregroundColor(.orange)
@@ -790,11 +821,21 @@ struct SettingsView: View {
 
             Spacer()
 
-            Button(win.isLocked ? "Unlock" : "Lock Position") {
-                WindowManager.shared.setWindowLocked(id: win.id, locked: !win.isLocked)
+            Button(win.isFloating ? "Unfloat" : "Float") {
+                WindowManager.shared.setWindowFloating(id: win.id, floating: !win.isFloating)
                 refreshData()
             }
             .buttonStyle(.bordered)
+            .tint(win.isFloating ? .purple : .primary)
+            .help("Keep window always on top in the foreground and ignore during tiling")
+
+            if !win.isFloating {
+                Button(win.isLocked ? "Unlock" : "Lock Position") {
+                    WindowManager.shared.setWindowLocked(id: win.id, locked: !win.isLocked)
+                    refreshData()
+                }
+                .buttonStyle(.bordered)
+            }
 
             if index == 0 && WindowManager.shared.masterWindowID != nil {
                 Button("Auto Master") {
@@ -802,7 +843,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .help("Revert master window choice to automatic scoring")
-            } else if index != 0 && !win.isLocked {
+            } else if index != 0 && !win.isLocked && !win.isFloating {
                 Button("Set as Master") {
                     promoteToMaster(id: win.id, appName: win.appName)
                 }
@@ -831,6 +872,8 @@ struct SettingsView: View {
                     shortcutRow(title: "Set Window as Master", desc: "Promotes focused window to master slot", shortcut: config.masterShortcut, field: "master")
                     Divider()
                     shortcutRow(title: "Lock/Unlock Active Window", desc: "Locks window in place; reserves its grid tiles", shortcut: config.lockShortcut, field: "lock")
+                    Divider()
+                    shortcutRow(title: "Toggle Floating Window", desc: "Pins window on top; ignored by tiling engine", shortcut: config.floatShortcut, field: "float")
                     Divider()
                     shortcutRow(title: "Open Settings GUI", desc: "Opens this configuration window", shortcut: config.guiShortcut, field: "gui")
                 }
@@ -1417,6 +1460,7 @@ struct SettingsView: View {
             case "optimize": self.config.shortcut = newShortcut
             case "master": self.config.masterShortcut = newShortcut
             case "lock": self.config.lockShortcut = newShortcut
+            case "float": self.config.floatShortcut = newShortcut
             case "gui": self.config.guiShortcut = newShortcut
             default: break
             }

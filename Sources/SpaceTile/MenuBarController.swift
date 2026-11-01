@@ -114,6 +114,11 @@ class MenuBarController: NSObject, NSMenuDelegate {
         lockItem.target = self
         menu.addItem(lockItem)
 
+        let floatItem = NSMenuItem(title: "Toggle Floating Window (Always on Top)", action: #selector(toggleFloatAction), keyEquivalent: "f")
+        floatItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        floatItem.target = self
+        menu.addItem(floatItem)
+
         if WindowManager.shared.masterWindowID != nil {
             let clearMasterItem = NSMenuItem(title: "Reset to Automatic Scoring", action: #selector(clearMasterAction), keyEquivalent: "")
             clearMasterItem.target = self
@@ -173,6 +178,10 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleLockAction() {
         _ = WindowManager.shared.toggleLockForFocusedWindow()
+    }
+
+    @objc private func toggleFloatAction() {
+        _ = WindowManager.shared.toggleFloatForFocusedWindow()
     }
 
     @objc private func clearMasterAction() {

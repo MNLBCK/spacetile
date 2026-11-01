@@ -23,6 +23,9 @@ func printHelp() {
 
     \u{001B}[1mSTANDARD-SHORTCUTS:\u{001B}[0m
       Hyper + Leertaste  (⌃⌥⇧⌘ + Space)  ➔ Fenster optimieren
+      Hyper + Return     (⌃⌥⇧⌘ + Enter)  ➔ Als Master-Fenster setzen
+      Hyper + L          (⌃⌥⇧⌘ + L)      ➔ Fensterposition sperren (Lock)
+      Hyper + F          (⌃⌥⇧⌘ + F)      ➔ Floating Fenster (Always on Top, ignoriert beim Tiling)
       Hyper + S          (⌃⌥⇧⌘ + S)      ➔ Einstellungen GUI öffnen
     """)
 }
@@ -42,6 +45,9 @@ case "clear-master", "reset-master":
 
 case "lock":
     _ = WindowManager.shared.toggleLockForFocusedWindow()
+
+case "float":
+    _ = WindowManager.shared.toggleFloatForFocusedWindow()
 
 case "gui", "settings":
     let targetTab = args.count > 1 ? args[1] : nil

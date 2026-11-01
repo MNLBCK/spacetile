@@ -29,12 +29,13 @@ struct AppWeightConfig: Codable, Identifiable {
 }
 
 struct Config: Codable {
-    static let version = "1.5.1"
+    static let version = "1.5.2"
 
     // Shortcuts
     var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)
     var masterShortcut: ShortcutConfig // Set Master (Hyper+Return)
     var lockShortcut: ShortcutConfig   // Lock Window (Hyper+L)
+    var floatShortcut: ShortcutConfig  // Float Window Always on Top (Hyper+F)
     var guiShortcut: ShortcutConfig    // Settings (Hyper+S)
 
     // Layout & Spacing
@@ -59,6 +60,7 @@ struct Config: Codable {
         shortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "space"),
         masterShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "return"),
         lockShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "l"),
+        floatShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "f"),
         guiShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "s"),
         gap: Double = 10.0,
         margin: Double = 12.0,
@@ -75,6 +77,7 @@ struct Config: Codable {
         self.shortcut = shortcut
         self.masterShortcut = masterShortcut
         self.lockShortcut = lockShortcut
+        self.floatShortcut = floatShortcut
         self.guiShortcut = guiShortcut
         self.gap = gap
         self.margin = margin
@@ -116,7 +119,7 @@ struct Config: Codable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case shortcut, masterShortcut, lockShortcut, guiShortcut
+        case shortcut, masterShortcut, lockShortcut, floatShortcut, guiShortcut
         case gap, margin, singleWindowMode
         case animationMode, animationDuration, animationSteps, freezeContentDuringResize
         case appWeights, sideBySideForNotesAndBrowser, enableSpaceLearning, ignoredApps
@@ -129,6 +132,7 @@ struct Config: Codable {
         shortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .shortcut) ?? def.shortcut
         masterShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .masterShortcut) ?? def.masterShortcut
         lockShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .lockShortcut) ?? def.lockShortcut
+        floatShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .floatShortcut) ?? def.floatShortcut
         guiShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .guiShortcut) ?? def.guiShortcut
 
         gap = try container.decodeIfPresent(Double.self, forKey: .gap) ?? def.gap
