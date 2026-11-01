@@ -29,6 +29,8 @@ struct AppWeightConfig: Codable, Identifiable {
 }
 
 struct Config: Codable {
+    static let version = "1.5.0"
+
     // Shortcuts
     var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)
     var masterShortcut: ShortcutConfig // Set Master (Hyper+Return)
@@ -100,7 +102,8 @@ struct Config: Codable {
             AppWeightConfig(appName: "Xcode", score: 78, minWidth: 800, minHeight: 500, maxWidth: nil)
         ]
         self.ignoredApps = ignoredApps ?? [
-            "Vorssaint",
+            "Vorschau",
+            "Preview",
             "System Settings",
             "Systemeinstellungen",
             "Calculator",
@@ -163,9 +166,8 @@ struct Config: Codable {
             let decoder = JSONDecoder()
             return try decoder.decode(Config.self, from: data)
         } catch {
-            let def = Config.default
-            def.save()
-            return def
+            print("[\u{001B}[31mConfig\u{001B}[0m] Failed to parse config.json: \(error). Using in-memory defaults without overwriting config file.")
+            return Config.default
         }
     }
 
@@ -177,7 +179,7 @@ struct Config: Codable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(self) {
-            try? data.write(to: url)
+            try? data.write(to: url, options: .atomic)
         }
     }
 }

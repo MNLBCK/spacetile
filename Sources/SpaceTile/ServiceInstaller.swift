@@ -88,9 +88,9 @@ struct ServiceInstaller {
             <key>CFBundleIdentifier</key>
             <string>\(label)</string>
             <key>CFBundleVersion</key>
-            <string>1.3.0</string>
+            <string>\(Config.version)</string>
             <key>CFBundleShortVersionString</key>
-            <string>1.3.0</string>
+            <string>\(Config.version)</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>CFBundleExecutable</key>
@@ -201,32 +201,37 @@ struct ServiceInstaller {
         print(" - Accessibility: \(trusted ? "\u{001B}[32mGranted\u{001B}[0m" : "\u{001B}[31mNot Granted\u{001B}[0m")")
     }
 
-    static func start() {
+    @discardableResult
+    private static func runCommand(_ path: String, arguments: [String]) -> (status: Int32, output: String) {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["load", "-w", plistURL.path]
-        try? process.run()
-        process.waitUntilExit()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let out = String(data: data, encoding: .utf8) ?? ""
+            return (process.terminationStatus, out)
+        } catch {
+            return (-1, "")
+        }
+    }
+
+    static func start() {
+        runCommand("/bin/launchctl", arguments: ["load", "-w", plistURL.path])
     }
 
     static func stop() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["unload", plistURL.path]
-        try? process.run()
-        process.waitUntilExit()
+        runCommand("/bin/launchctl", arguments: ["unload", plistURL.path])
     }
 
     static func restart() {
         let uid = getuid()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["kickstart", "-k", "gui/\(uid)/\(label)"]
-        try? process.run()
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
-            // Fallback to reload if not already loaded
+        let result = runCommand("/bin/launchctl", arguments: ["kickstart", "-k", "gui/\(uid)/\(label)"])
+        if result.status != 0 {
             start()
         }
     }
@@ -235,11 +240,7 @@ struct ServiceInstaller {
         let bin = binaryDestination.path
         let script = "nohup /bin/sh -c 'sleep 0.8 && \"\(bin)\" gui \(targetTab)' >/dev/null 2>&1 &"
         let escaped = script.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        let osaProcess = Process()
-        osaProcess.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        osaProcess.arguments = ["-e", "do shell script \"\(escaped)\""]
-        try? osaProcess.run()
-        osaProcess.waitUntilExit()
+        runCommand("/usr/bin/osascript", arguments: ["-e", "do shell script \"\(escaped)\""])
 
         restart()
 
@@ -251,32 +252,36 @@ struct ServiceInstaller {
     }
 
     static func statusInfo() -> (isRunning: Bool, pid: Int?) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["list"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
+        let res = runCommand("/bin/launchctl", arguments: ["list", label])
+        guard res.status == 0 else { return (false, nil) }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return (false, nil) }
-
-        for line in output.components(separatedBy: "\n") {
-            if line.contains(label) {
-                let parts = line.split(whereSeparator: { $0.isWhitespace })
-                if let first = parts.first, let pid = Int(first) {
+        // Format in macOS: "PID" = 12345;
+        for line in res.output.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("\"PID\"") || trimmed.hasPrefix("PID") {
+                let digits = trimmed.filter { $0.isNumber }
+                if let pid = Int(digits) {
                     return (true, pid)
                 }
-                return (true, nil)
             }
         }
-        return (false, nil)
+        return (true, nil)
     }
 
     static func getRecentLogs(maxLines: Int = 20) -> [String] {
-        guard let data = try? Data(contentsOf: logFileURL),
-              let content = String(data: data, encoding: .utf8) else {
+        guard let handle = try? FileHandle(forReadingFrom: logFileURL) else {
+            return ["No logs available yet."]
+        }
+        defer { try? handle.close() }
+
+        let fileSize = handle.seekToEndOfFile()
+        guard fileSize > 0 else { return ["No logs available yet."] }
+
+        let readLength = min(fileSize, 32 * 1024)
+        handle.seek(toFileOffset: fileSize - readLength)
+        let data = handle.readDataToEndOfFile()
+
+        guard let content = String(data: data, encoding: .utf8) else {
             return ["No logs available yet."]
         }
         let lines = content.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }

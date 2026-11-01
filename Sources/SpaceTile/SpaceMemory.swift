@@ -15,6 +15,8 @@ class SpaceMemory {
 
     private(set) var profiles: [SpaceProfile] = []
 
+    private let lock = NSLock()
+
     static var storageURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".config/spacetile/space_memory.json")
@@ -25,6 +27,8 @@ class SpaceMemory {
     }
 
     func load() {
+        lock.lock()
+        defer { lock.unlock() }
         let url = SpaceMemory.storageURL
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         do {
@@ -42,11 +46,13 @@ class SpaceMemory {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(profiles) {
-            try? data.write(to: url)
+            try? data.write(to: url, options: .atomic)
         }
     }
 
     func findProfile(apps: [String], resolution: String) -> SpaceProfile? {
+        lock.lock()
+        defer { lock.unlock() }
         let sorted = apps.sorted()
         return profiles.first { p in
             p.displayResolution == resolution && p.apps.sorted() == sorted
@@ -54,13 +60,14 @@ class SpaceMemory {
     }
 
     func recordObservation(apps: [String], resolution: String, observedMasterRatio: Double, preferredLayout: String? = nil) {
+        lock.lock()
+        defer { lock.unlock() }
         let sorted = apps.sorted()
         let layout = preferredLayout ?? (abs(observedMasterRatio - 0.5) < 0.06 ? "sideBySide" : "masterStack")
 
         if let idx = profiles.firstIndex(where: { $0.displayResolution == resolution && $0.apps.sorted() == sorted }) {
             var existing = profiles[idx]
             let oldRatio = existing.learnedMasterRatio ?? observedMasterRatio
-            // Exponential moving average for smooth adaptation
             existing.learnedMasterRatio = (oldRatio * 0.7) + (observedMasterRatio * 0.3)
             existing.observationsCount += 1
             existing.lastObserved = Date()
@@ -80,7 +87,16 @@ class SpaceMemory {
         save()
     }
 
+    func removeProfile(id: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        profiles.removeAll { $0.id == id }
+        save()
+    }
+
     func clear() {
+        lock.lock()
+        defer { lock.unlock() }
         profiles.removeAll()
         save()
     }

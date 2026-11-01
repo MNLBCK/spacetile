@@ -23,6 +23,7 @@ struct ManagedWindow {
 class WindowManager {
     static let shared = WindowManager()
 
+    private let stateLock = NSLock()
     private(set) var lockedWindowIDs: Set<CGWindowID> = []
     private(set) var masterWindowID: CGWindowID?
     private var lastRunTime: Date?
@@ -43,17 +44,25 @@ class WindowManager {
     }
 
     func reloadMasterWindowID() {
-        guard let data = try? Data(contentsOf: WindowManager.masterStoreURL),
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard FileManager.default.fileExists(atPath: WindowManager.masterStoreURL.path),
+              let data = try? Data(contentsOf: WindowManager.masterStoreURL),
               let id = try? JSONDecoder().decode(UInt32.self, from: data) else {
+            self.masterWindowID = nil
             return
         }
         self.masterWindowID = CGWindowID(id)
     }
 
     func persistMasterWindowID() {
+        stateLock.lock()
+        let currentID = masterWindowID
+        stateLock.unlock()
+
         let url = WindowManager.masterStoreURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let id = masterWindowID {
+        if let id = currentID {
             if let data = try? JSONEncoder().encode(UInt32(id)) {
                 try? data.write(to: url, options: .atomic)
             }
@@ -69,29 +78,38 @@ class WindowManager {
     }
 
     func setMasterWindow(id: CGWindowID) {
-        reloadMasterWindowID()
+        stateLock.lock()
         self.masterWindowID = id
+        stateLock.unlock()
         persistMasterWindowID()
         _ = optimize(verbose: true, forcedMasterID: id)
     }
 
     func clearMasterWindow() {
-        reloadMasterWindowID()
+        stateLock.lock()
         self.masterWindowID = nil
+        stateLock.unlock()
         persistMasterWindowID()
         _ = optimize(verbose: true)
     }
 
     func reloadLockedWindowIDs() {
-        guard let data = try? Data(contentsOf: WindowManager.lockedStoreURL),
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard FileManager.default.fileExists(atPath: WindowManager.lockedStoreURL.path),
+              let data = try? Data(contentsOf: WindowManager.lockedStoreURL),
               let list = try? JSONDecoder().decode([UInt32].self, from: data) else {
+            self.lockedWindowIDs = []
             return
         }
         self.lockedWindowIDs = Set(list.map { CGWindowID($0) })
     }
 
     func persistLockedWindowIDs() {
+        stateLock.lock()
         let list = Array(lockedWindowIDs).map { UInt32($0) }
+        stateLock.unlock()
+
         let url = WindowManager.lockedStoreURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(list) {
@@ -158,7 +176,7 @@ class WindowManager {
         let appRef = AXUIElementCreateApplication(front.processIdentifier)
         var winRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
-              let win = winRef else { return nil }
+              let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() else { return nil }
 
         var winID: CGWindowID = 0
         guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return nil }
@@ -185,7 +203,7 @@ class WindowManager {
         let appRef = AXUIElementCreateApplication(front.processIdentifier)
         var winRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
-              let win = winRef else { return false }
+              let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() else { return false }
 
         var winID: CGWindowID = 0
         guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return false }
@@ -762,6 +780,12 @@ class WindowManager {
         let interval = duration / Double(totalSteps)
         let cid = freezeContent ? WindowManager.CGSMainConnectionID() : 0
 
+        defer {
+            if freezeContent && cid != 0 {
+                _ = WindowManager.CGSReenableUpdate(cid)
+            }
+        }
+
         for step in 1...totalSteps {
             let progress = Double(step) / Double(totalSteps)
             // Cubic easeInOut curve for natural acceleration and deceleration
@@ -838,7 +862,7 @@ class WindowManager {
             let appRef = AXUIElementCreateApplication(frontApp.processIdentifier)
             var focusedWinRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWinRef) == .success,
-               let focusedWin = focusedWinRef {
+               let focusedWin = focusedWinRef, CFGetTypeID(focusedWin) == AXUIElementGetTypeID() {
                 if let frame = getWindowFrame(focusedWin as! AXUIElement) {
                     let point = CGPoint(x: frame.midX, y: frame.midY)
                     for screen in NSScreen.screens {
@@ -901,7 +925,10 @@ class WindowManager {
             let y = bounds["Y"] as? Double ?? 0
             let rect = CGRect(x: x, y: y, width: w, height: h)
 
-            if layer == 0 && w >= 150 && h >= 150 && rect.intersects(screenBounds) {
+            let intersection = rect.intersection(screenBounds)
+            let midPoint = CGPoint(x: rect.midX, y: rect.midY)
+            let isMajorityOnScreen = !intersection.isNull && (intersection.width * intersection.height >= (rect.width * rect.height) * 0.5)
+            if layer == 0 && w >= 150 && h >= 150 && (screenBounds.contains(midPoint) || isMajorityOnScreen) {
                 if !ignoredApps.contains(owner) && owner != "SpaceTile" {
                     onScreenMap[id] = (order: order, owner: owner, title: name, bounds: rect)
                 }
@@ -911,9 +938,10 @@ class WindowManager {
         var focusedWindowID: CGWindowID?
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             let appRef = AXUIElementCreateApplication(frontApp.processIdentifier)
+            AXUIElementSetMessagingTimeout(appRef, 0.25)
             var focusedRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedRef) == .success,
-               let win = focusedRef {
+               let win = focusedRef, CFGetTypeID(win) == AXUIElementGetTypeID() {
                 var fID: CGWindowID = 0
                 if _AXUIElementGetWindow(win as! AXUIElement, &fID) == .success {
                     focusedWindowID = fID
@@ -929,6 +957,7 @@ class WindowManager {
             if ignoredApps.contains(appName) || appName == "SpaceTile" { continue }
 
             let appRef = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(appRef, 0.25)
             var winsRef: CFTypeRef?
             guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &winsRef) == .success,
                   let wins = winsRef as? [AXUIElement] else { continue }
@@ -940,13 +969,27 @@ class WindowManager {
                     continue
                 }
 
-                matchedIDs.insert(winID)
-
                 var minRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef) == .success,
                    let isMin = minRef as? Bool, isMin {
                     continue
                 }
+
+                // Filter fullscreen windows
+                var fullRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &fullRef) == .success,
+                   let isFull = fullRef as? Bool, isFull {
+                    continue
+                }
+
+                // Filter non-resizable windows / fixed modal dialogs
+                var settable: DarwinBoolean = false
+                if AXUIElementIsAttributeSettable(win, kAXSizeAttribute as CFString, &settable) == .success,
+                   !settable.boolValue {
+                    continue
+                }
+
+                matchedIDs.insert(winID)
 
                 var titleRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
@@ -980,9 +1023,9 @@ class WindowManager {
             }
         }
 
-        // Add any remaining on-screen windows that weren't matched via AX
+        // Add any remaining on-screen windows that weren't matched via AX only if locked (to reserve their tiles)
         for (winID, info) in onScreenMap {
-            if !matchedIDs.contains(winID) {
+            if !matchedIDs.contains(winID) && lockedWindowIDs.contains(winID) {
                 let weightConfig = config.appWeights.first(where: { $0.appName.lowercased() == info.owner.lowercased() })
                 let score = weightConfig?.score ?? defaultScoreFor(appName: info.owner)
                 let minW = weightConfig?.minWidth ?? 450
@@ -996,7 +1039,7 @@ class WindowManager {
                     title: info.title,
                     isFocused: (winID == focusedWindowID),
                     zOrder: info.order,
-                    isLocked: lockedWindowIDs.contains(winID),
+                    isLocked: true,
                     currentFrame: info.bounds,
                     score: score,
                     minWidth: minW,
@@ -1045,7 +1088,8 @@ class WindowManager {
         var sizeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
               AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
-              let p = posRef, let s = sizeRef else {
+              let p = posRef, let s = sizeRef,
+              CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else {
             return nil
         }
         var pt = CGPoint.zero

@@ -11,14 +11,12 @@ cd "$(dirname "$0")"
 # 1. Compile Release Binary
 swift build -c release
 
-# Locate binary
-BUILD_BIN=".build/out/Products/Release/spacetile"
-if [ ! -f "$BUILD_BIN" ]; then
-    BUILD_BIN="$(find .build -type f -name spacetile -perm +111 2>/dev/null | grep -v dSYM | head -n 1)"
-fi
+# Locate binary deterministically
+BUILD_DIR="$(swift build -c release --show-bin-path)"
+BUILD_BIN="$BUILD_DIR/spacetile"
 
 if [ -z "$BUILD_BIN" ] || [ ! -f "$BUILD_BIN" ]; then
-    echo "❌ Error: Release binary could not be found."
+    echo "❌ Error: Release binary could not be found at $BUILD_BIN."
     exit 1
 fi
 
@@ -35,7 +33,7 @@ fi
 
 echo ""
 echo "=================================================================="
-echo "🎉 SpaceTile v1.4.0 is successfully installed!"
+echo "🎉 SpaceTile v1.5.0 is successfully installed!"
 echo "=================================================================="
 echo " • App Bundle:   ~/Applications/SpaceTile.app"
 echo " • CLI Tool:     ~/.local/bin/spacetile"

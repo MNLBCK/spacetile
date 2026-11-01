@@ -11,8 +11,12 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             guard let self else { return }
 
             NSApp.setActivationPolicy(.regular)
+            MenuBarController.shared.setup()
 
             if let win = self.window {
+                if let tab = initialTab {
+                    NotificationCenter.default.post(name: NSNotification.Name("com.guppi.spacetile.switchTab"), object: tab)
+                }
                 win.orderFrontRegardless()
                 win.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)

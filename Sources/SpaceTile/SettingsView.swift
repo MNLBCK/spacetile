@@ -151,12 +151,17 @@ struct AnimatedTileVisualizer: View {
     }
 }
 
-// MARK: - Live Grid Interactive Visualizer (Exact Usable Aspect Ratio, Real Windows, Semi-Transparent, Double-Click Master)
+// MARK: - Live Grid Interactive Visualizer (Exact Usable Aspect Ratio, Real Windows, Semi-Transparent, Drag & Drop Swap, Double-Click Master)
 struct LiveGridView: View {
     let windows: [ManagedWindow]
     let onSetMasterAndRearrange: (CGWindowID, String) -> Void
     let onClearMaster: () -> Void
     let onToggleLock: (CGWindowID) -> Void
+    let onSwapWindows: (CGWindowID, CGWindowID) -> Void
+
+    @State private var draggedWindowID: CGWindowID? = nil
+    @State private var dragTranslation: CGSize = .zero
+    @State private var hoveredDropTargetID: CGWindowID? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -172,10 +177,10 @@ struct LiveGridView: View {
                 Spacer()
 
                 HStack(spacing: 5) {
-                    Image(systemName: "hand.tap.fill")
+                    Image(systemName: "arrow.triangle.swap")
                         .font(.caption2)
                         .foregroundColor(.cyan)
-                    Text("Double-click or Right-click any window to set as Master")
+                    Text("Drag to swap slots • Double-click or Right-click to set Master")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -221,18 +226,21 @@ struct LiveGridView: View {
         }
     }
 
-    private var currentScreen: NSScreen {
-        NSScreen.main ?? NSScreen.screens.first!
+    private var currentScreen: NSScreen? {
+        NSScreen.main ?? NSScreen.screens.first
     }
 
     private var workAreaAspect: CGFloat {
-        let vf = currentScreen.visibleFrame
+        guard let vf = currentScreen?.visibleFrame, vf.height > 0 else { return 16.0 / 9.0 }
         return max(1.0, vf.width) / max(1.0, vf.height)
     }
 
     private var axRect: CGRect {
-        let vf = currentScreen.visibleFrame
-        let primaryH = NSScreen.screens.first?.frame.height ?? 0
+        guard let screen = currentScreen else {
+            return CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        }
+        let vf = screen.visibleFrame
+        let primaryH = NSScreen.screens.first?.frame.height ?? vf.height
         return CGRect(
             x: vf.origin.x,
             y: primaryH - (vf.origin.y + vf.height),
@@ -290,8 +298,26 @@ struct LiveGridView: View {
         let boxH = relH * canvasH
 
         let isMaster = (index == 0)
-        let strokeColor = win.isLocked ? Color.orange.opacity(0.85) : (isMaster ? Color.cyan.opacity(0.85) : Color.primary.opacity(0.25))
-        let bgColor = isMaster ? Color.cyan.opacity(0.32) : Color(NSColor.controlAccentColor).opacity(0.20)
+        let isBeingDragged = (draggedWindowID == win.id)
+        let isDropTarget = (hoveredDropTargetID == win.id)
+
+        let strokeColor: Color = {
+            if isDropTarget { return Color.cyan }
+            if isBeingDragged { return Color.white }
+            if win.isLocked { return Color.orange.opacity(0.85) }
+            if isMaster { return Color.cyan.opacity(0.85) }
+            return Color.primary.opacity(0.25)
+        }()
+
+        let bgColor: Color = {
+            if isDropTarget { return Color.cyan.opacity(0.48) }
+            if isBeingDragged { return Color.cyan.opacity(0.40) }
+            if isMaster { return Color.cyan.opacity(0.32) }
+            return Color(NSColor.controlAccentColor).opacity(0.20)
+        }()
+
+        let curX = isBeingDragged ? (boxX + dragTranslation.width) : boxX
+        let curY = isBeingDragged ? (boxY + dragTranslation.height) : boxY
 
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 3) {
@@ -305,7 +331,11 @@ struct LiveGridView: View {
 
                 Spacer()
 
-                if win.isLocked {
+                if isDropTarget {
+                    Image(systemName: "arrow.triangle.swap")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.white)
+                } else if win.isLocked {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 8))
                         .foregroundColor(.orange)
@@ -330,8 +360,11 @@ struct LiveGridView: View {
         .padding(4)
         .frame(width: boxW, height: boxH)
         .background(bgColor)
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: isMaster ? 1.5 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: (isDropTarget || isMaster) ? 2.0 : 1.0))
         .cornerRadius(4)
+        .shadow(color: isBeingDragged ? Color.black.opacity(0.45) : Color.clear, radius: 8, x: 0, y: 4)
+        .scaleEffect(isBeingDragged ? 1.04 : (isDropTarget ? 1.02 : 1.0))
+        .zIndex(isBeingDragged ? 999 : (isDropTarget ? 500 : Double(100 - index)))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             onSetMasterAndRearrange(win.id, win.appName)
@@ -350,7 +383,49 @@ struct LiveGridView: View {
                 onToggleLock(win.id)
             }
         }
-        .offset(x: boxX, y: boxY)
+        .gesture(
+            DragGesture(coordinateSpace: .local)
+                .onChanged { gesture in
+                    draggedWindowID = win.id
+                    dragTranslation = gesture.translation
+
+                    let dragCenter = CGPoint(
+                        x: boxX + boxW / 2.0 + gesture.translation.width,
+                        y: boxY + boxH / 2.0 + gesture.translation.height
+                    )
+
+                    let target = windows.first { other in
+                        guard other.id != win.id else { return false }
+                        let oRawX = (other.currentFrame.origin.x - axRect.origin.x) / axRect.width
+                        let oRawY = (other.currentFrame.origin.y - axRect.origin.y) / axRect.height
+                        let oRawW = other.currentFrame.width / axRect.width
+                        let oRawH = other.currentFrame.height / axRect.height
+
+                        let oRelX = max(0, min(0.95, oRawX))
+                        let oRelY = max(0, min(0.95, oRawY))
+                        let oRelW = max(0.08, min(1.0 - oRelX, oRawW))
+                        let oRelH = max(0.08, min(1.0 - oRelY, oRawH))
+
+                        let oX = oRelX * canvasW
+                        let oY = oRelY * canvasH
+                        let oW = oRelW * canvasW
+                        let oH = oRelH * canvasH
+                        return CGRect(x: oX, y: oY, width: oW, height: oH).contains(dragCenter)
+                    }
+                    hoveredDropTargetID = target?.id
+                }
+                .onEnded { _ in
+                    if let targetID = hoveredDropTargetID {
+                        onSwapWindows(win.id, targetID)
+                    }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        draggedWindowID = nil
+                        dragTranslation = .zero
+                        hoveredDropTargetID = nil
+                    }
+                }
+        )
+        .offset(x: curX, y: curY)
     }
 }
 
@@ -388,14 +463,15 @@ struct SettingsView: View {
         case "grid", "live", "space", "0": tab = 0
         case "shortcuts", "hotkeys", "1": tab = 1
         case "scoring", "scores", "weights", "apps", "2": tab = 2
-        case "daemon", "logs", "3": tab = 3
-        case "about", "info", "4": tab = 4
+        case "memory", "spacememory", "brain", "3": tab = 3
+        case "daemon", "logs", "4": tab = 4
+        case "about", "info", "5": tab = 5
         default: tab = 0
         }
         _selectedTab = State(initialValue: tab)
     }
 
-    let pollTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+    let pollTimer = Timer.publish(every: 3.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -508,8 +584,9 @@ struct SettingsView: View {
                 Text("Live Grid").tag(0)
                 Text("Shortcuts & Spacing").tag(1)
                 Text("Window Weights").tag(2)
-                Text("Daemon").tag(3)
-                Text("About SpaceTile").tag(4)
+                Text("SpaceMemory").tag(3)
+                Text("Daemon").tag(4)
+                Text("About SpaceTile").tag(5)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
@@ -522,8 +599,9 @@ struct SettingsView: View {
                 case 0: liveGridTab
                 case 1: shortcutsTab
                 case 2: windowWeightsTab
-                case 3: daemonTab
-                case 4: aboutTab
+                case 3: spaceMemoryTab
+                case 4: daemonTab
+                case 5: aboutTab
                 default: EmptyView()
                 }
             }
@@ -603,12 +681,31 @@ struct SettingsView: View {
                 refreshData()
             }
         }
+        .onChange(of: selectedTab) { _ in
+            stopRecording()
+            if selectedTab == 4 {
+                recentLogs = ServiceInstaller.getRecentLogs()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("com.guppi.spacetile.switchTab"))) { notif in
+            if let tabName = notif.object as? String {
+                switch tabName.lowercased() {
+                case "grid", "live", "space", "0": selectedTab = 0
+                case "shortcuts", "hotkeys", "1": selectedTab = 1
+                case "scoring", "scores", "weights", "apps", "2": selectedTab = 2
+                case "memory", "spacememory", "brain", "3": selectedTab = 3
+                case "daemon", "logs", "4": selectedTab = 4
+                case "about", "info", "5": selectedTab = 5
+                default: break
+                }
+            }
+        }
         .onDisappear {
             stopRecording()
         }
     }
 
-    // MARK: - Tab 0: Live Grid (True Usable Aspect Ratio, Grid Spanning, Semi-Transparent, Double-Click Master)
+    // MARK: - Tab 0: Live Grid (True Usable Aspect Ratio, Grid Spanning, Semi-Transparent, Drag & Drop Swap, Double-Click Master)
     var liveGridTab: some View {
         VStack(alignment: .leading, spacing: 8) {
             LiveGridView(
@@ -623,6 +720,9 @@ struct SettingsView: View {
                     let isLocked = WindowManager.shared.lockedWindowIDs.contains(winID)
                     WindowManager.shared.setWindowLocked(id: winID, locked: !isLocked)
                     refreshData()
+                },
+                onSwapWindows: { idA, idB in
+                    swapWindows(idA: idA, idB: idB)
                 }
             )
 
@@ -1005,7 +1105,7 @@ struct SettingsView: View {
                 minHeight: 400
             ))
         }
-        config.save()
+        scheduleSaveConfig()
         showStatus("Set weight for '\(appName)' to \(scoreFor(appName: appName)).")
     }
 
@@ -1023,7 +1123,7 @@ struct SettingsView: View {
                 ))
             }
         }
-        config.save()
+        scheduleSaveConfig()
         showStatus("Updated category weights by \(delta > 0 ? "+\(delta)" : "\(delta)").")
     }
 
@@ -1219,7 +1319,7 @@ struct SettingsView: View {
                                 .cornerRadius(5)
                         }
                     }
-                    Text("Version 1.4.0 (macOS Native)")
+                    Text("Version \(Config.version) (macOS Native)")
                         .font(.subheadline).foregroundColor(.secondary)
                     Text("Grid-based ergonomic window allocation for macOS.")
                         .font(.caption).foregroundColor(.secondary)
@@ -1350,14 +1450,196 @@ struct SettingsView: View {
             }
         }
         daemonStatus = ServiceInstaller.statusInfo()
-        recentLogs = ServiceInstaller.getRecentLogs()
+        if selectedTab == 4 {
+            recentLogs = ServiceInstaller.getRecentLogs()
+        }
+    }
+
+    @State private var saveWorkItem: DispatchWorkItem? = nil
+
+    private func scheduleSaveConfig() {
+        saveWorkItem?.cancel()
+        let item = DispatchWorkItem { [self] in
+            config.save()
+        }
+        saveWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: item)
+    }
+
+    func swapWindows(idA: CGWindowID, idB: CGWindowID) {
+        guard let idxA = currentWindows.firstIndex(where: { $0.id == idA }),
+              let idxB = currentWindows.firstIndex(where: { $0.id == idB }) else { return }
+
+        withAnimation(.easeInOut(duration: 0.25)) {
+            currentWindows.swapAt(idxA, idxB)
+        }
+
+        if idxA == 0 {
+            WindowManager.shared.setMasterWindow(id: idB)
+            showStatus("Swapped slots. '\(currentWindows[0].appName)' is now Master.")
+        } else if idxB == 0 {
+            WindowManager.shared.setMasterWindow(id: idA)
+            showStatus("Swapped slots. '\(currentWindows[0].appName)' is now Master.")
+        } else {
+            showStatus("Swapped '\(currentWindows[idxA].appName)' and '\(currentWindows[idxB].appName)'.")
+            DispatchQueue.global(qos: .userInitiated).async {
+                WindowManager.shared.optimize(verbose: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    self.refreshData()
+                }
+            }
+        }
+    }
+
+    // MARK: - Tab 3: SpaceMemory Dashboard (Learned Split Ratios & Profiles)
+    var spaceMemoryTab: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox(label: Label("SpaceMemory Machine-Assisted Tiling", systemImage: "brain.head.profile")) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("SpaceMemory continuously learns your ergonomic preferences per display resolution and application cluster. When apps are launched or arranged, it automatically reapplies your learned split ratio.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Toggle("Enable Space Learning & Auto-Adaptation", isOn: $config.enableSpaceLearning)
+                        .toggleStyle(.switch)
+                        .onChange(of: config.enableSpaceLearning) { _ in
+                            config.save()
+                        }
+                }
+                .padding(8)
+            }
+
+            HStack {
+                Text("Learned Resolution & App Profiles (\(SpaceMemory.shared.profiles.count)):")
+                    .font(.subheadline.bold())
+                Spacer()
+
+                Button(action: {
+                    if let msg = SpaceObserver.shared.learnCurrentLayoutNow() {
+                        showStatus(msg)
+                    } else {
+                        showStatus("Could not sample current layout.")
+                    }
+                }) {
+                    Label("Learn Current Space", systemImage: "camera.badge.ellipsis")
+                }
+                .buttonStyle(.bordered)
+
+                if !SpaceMemory.shared.profiles.isEmpty {
+                    Button(action: {
+                        SpaceMemory.shared.clear()
+                        showStatus("Cleared SpaceMemory profiles.")
+                    }) {
+                        Label("Clear All Memory", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(.red)
+                }
+            }
+
+            if SpaceMemory.shared.profiles.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 28))
+                        .foregroundColor(.secondary)
+                    Text("No profiles learned yet.")
+                        .font(.subheadline.bold())
+                    Text("SpaceTile automatically saves layout ratios when you arrange windows with Hyper+Space or click 'Learn Current Space'.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 400)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 30)
+                .background(Color.secondary.opacity(0.04))
+                .cornerRadius(8)
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 8) {
+                        ForEach(SpaceMemory.shared.profiles) { prof in
+                            spaceProfileRow(prof)
+                        }
+                    }
+                    .padding(.trailing, 4)
+                }
+                .frame(maxHeight: 280)
+            }
+        }
+    }
+
+    private func spaceProfileRow(_ prof: SpaceProfile) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    ForEach(prof.apps, id: \.self) { app in
+                        Text(app)
+                            .font(.caption.bold())
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.cyan.opacity(0.15))
+                            .foregroundColor(.cyan)
+                            .cornerRadius(4)
+                    }
+
+                    Text("•")
+                        .foregroundColor(.secondary)
+
+                    Text(prof.displayResolution)
+                        .font(.caption.monospaced())
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    let ratio = prof.learnedMasterRatio ?? 0.50
+                    let masterPct = Int(round(ratio * 100))
+                    let stackPct = 100 - masterPct
+
+                    GeometryReader { geo in
+                        HStack(spacing: 2) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.cyan.opacity(0.75))
+                                .frame(width: max(10, geo.size.width * CGFloat(ratio) - 2))
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.secondary.opacity(0.35))
+                        }
+                    }
+                    .frame(width: 120, height: 8)
+
+                    Text("Master: \(masterPct)% / Stack: \(stackPct)%")
+                        .font(.caption2.monospaced())
+                        .foregroundColor(.secondary)
+
+                    Spacer()
+
+                    Text("\(prof.observationsCount) observation\(prof.observationsCount == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Button(action: {
+                SpaceMemory.shared.removeProfile(id: prof.id)
+                showStatus("Removed profile for [\(prof.apps.joined(separator: ", "))].")
+            }) {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Delete this learned profile")
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.06))
+        .cornerRadius(6)
     }
 
     func refreshData() {
         checkStatus()
-        let screen = NSScreen.main ?? NSScreen.screens.first!
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let vf = screen.visibleFrame
-        let primaryH = NSScreen.screens.first?.frame.height ?? 0
+        let primaryH = NSScreen.screens.first?.frame.height ?? vf.height
         let axRect = CGRect(x: vf.origin.x, y: primaryH - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
         currentWindows = WindowManager.shared.collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps), config: config)
     }
