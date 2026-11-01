@@ -175,24 +175,39 @@ class WindowManager {
         reloadFloatingWindowIDs()
         let cid = WindowManager.CGSMainConnectionID()
         if floating {
-            // Floating windows are not locked in grid
             if lockedWindowIDs.contains(id) {
                 lockedWindowIDs.remove(id)
                 persistLockedWindowIDs()
             }
             floatingWindowIDs.insert(id)
             _ = WindowManager.CGSSetWindowLevel(cid, id, 3)
+
+            // Center window on target screen
+            let allWins = collectWindowsOnCurrentSpace(screenBounds: CGRect(x: 0, y: 0, width: 10000, height: 10000), ignoredApps: [], config: Config.load())
+            if let targetWin = allWins.first(where: { $0.id == id }), let elem = targetWin.element {
+                if let screen = findTargetScreen() ?? NSScreen.main ?? NSScreen.screens.first {
+                    let primaryH = NSScreen.screens.first?.frame.height ?? screen.frame.height
+                    let vf = screen.visibleFrame
+                    let axRect = CGRect(x: vf.origin.x, y: primaryH - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
+                    let config = Config.load()
+                    let workArea = axRect.insetBy(dx: config.margin, dy: config.margin)
+
+                    let floatW = max(550, min(targetWin.currentFrame.width, floor(workArea.width * 0.60)))
+                    let floatH = max(380, min(targetWin.currentFrame.height, floor(workArea.height * 0.65)))
+                    let centerX = round(workArea.origin.x + (workArea.width - floatW) / 2.0)
+                    let centerY = round(workArea.origin.y + (workArea.height - floatH) / 2.0)
+                    setWindowFrameImmediate(elem, target: CGRect(x: centerX, y: centerY, width: floatW, height: floatH))
+                    AXUIElementPerformAction(elem, kAXRaiseAction as CFString)
+                }
+            }
         } else {
             floatingWindowIDs.remove(id)
             _ = WindowManager.CGSSetWindowLevel(cid, id, 0)
         }
         persistFloatingWindowIDs()
-        DistributedNotificationCenter.default().postNotificationName(
-            NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
+        DispatchQueue.main.async { [weak self] in
+            self?.optimize(verbose: true)
+        }
     }
 
     static func isAccessibilityGranted(prompt: Bool = false) -> Bool {
@@ -276,12 +291,9 @@ class WindowManager {
             persistFloatingWindowIDs()
             _ = WindowManager.CGSSetWindowLevel(cid, winID, 0)
             print("[\u{001B}[33mSpaceTile\u{001B}[0m] Un-floated window for '\(appName)' (ID: \(winID)) -> Returns to standard grid tiling.")
-            DistributedNotificationCenter.default().postNotificationName(
-                NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
-                object: nil,
-                userInfo: nil,
-                deliverImmediately: true
-            )
+            DispatchQueue.main.async { [weak self] in
+                self?.optimize(verbose: true)
+            }
             return (false, appName)
         } else {
             if lockedWindowIDs.contains(winID) {
@@ -291,14 +303,29 @@ class WindowManager {
             floatingWindowIDs.insert(winID)
             persistFloatingWindowIDs()
             _ = WindowManager.CGSSetWindowLevel(cid, winID, 3)
+
+            // Center the floating window in the middle of the screen
+            if let screen = findTargetScreen() ?? NSScreen.main ?? NSScreen.screens.first {
+                let primaryH = NSScreen.screens.first?.frame.height ?? screen.frame.height
+                let vf = screen.visibleFrame
+                let axRect = CGRect(x: vf.origin.x, y: primaryH - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
+                let config = Config.load()
+                let workArea = axRect.insetBy(dx: config.margin, dy: config.margin)
+
+                let curFrame = getWindowFrame(win as! AXUIElement) ?? CGRect(x: 0, y: 0, width: 1100, height: 750)
+                let floatW = max(550, min(curFrame.width, floor(workArea.width * 0.60)))
+                let floatH = max(380, min(curFrame.height, floor(workArea.height * 0.65)))
+                let centerX = round(workArea.origin.x + (workArea.width - floatW) / 2.0)
+                let centerY = round(workArea.origin.y + (workArea.height - floatH) / 2.0)
+                setWindowFrameImmediate(win as! AXUIElement, target: CGRect(x: centerX, y: centerY, width: floatW, height: floatH))
+            }
+
             AXUIElementPerformAction(win as! AXUIElement, kAXRaiseAction as CFString)
-            print("[\u{001B}[35mSpaceTile\u{001B}[0m] Floated window for '\(appName)' (ID: \(winID)) -> Stays on top & excluded from tiling.")
-            DistributedNotificationCenter.default().postNotificationName(
-                NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
-                object: nil,
-                userInfo: nil,
-                deliverImmediately: true
-            )
+            print("[\u{001B}[35mSpaceTile\u{001B}[0m] Floated window for '\(appName)' (ID: \(winID)) -> Centered & stays on top.")
+
+            DispatchQueue.main.async { [weak self] in
+                self?.optimize(verbose: true)
+            }
             return (true, appName)
         }
     }
@@ -739,7 +766,6 @@ class WindowManager {
 
         // 3 Windows
         if count == 3 {
-            let masterWin = windows[0]
             if let fr = forcedRatio {
                 let masterCols = max(2, min(totalCols - 2, Int(round(Double(totalCols) * fr))))
                 let stackCols = totalCols - masterCols
@@ -751,7 +777,7 @@ class WindowManager {
                 return resultFrames
             }
 
-            if (masterWin.score <= 35 || masterWin.appName.lowercased().contains("term")) && is4K {
+            if is4K {
                 // 3 Equal-Width Columns with Master in the Center!
                 let colW = floor((workArea.width - 2 * gap) / 3.0)
                 let col0X = workArea.origin.x
@@ -790,181 +816,68 @@ class WindowManager {
         }
 
         // 4+ Windows: Use the 3x3 Signature Layout
-        let masterWin = windows[0]
-        let isTermMaster = masterWin.score <= 35 ||
-                           masterWin.appName.lowercased().contains("term") ||
-                           masterWin.appName.lowercased().contains("kitty") ||
-                           masterWin.appName.lowercased().contains("ghostty") ||
-                           masterWin.appName.lowercased().contains("alacritty")
-
         let cellW3 = (workArea.width - 2 * gap) / 3.0
         let cellH3 = (workArea.height - 2 * gap) / 3.0
 
-        // If Master is a Terminal on 4K, cap its width to ~1024px (never stretch to 2540px!)
-        if isTermMaster && is4K {
-            let termW: CGFloat = min(cellW3, CGFloat(masterWin.maxWidth ?? 1024))
-            let remW: CGFloat = workArea.width - termW - gap
-            let remColW: CGFloat = (remW - gap) / 2.0
-            let rightX: CGFloat = workArea.origin.x + termW + gap
-            let col1X = rightX
-            let col2X = rightX + remColW + gap
+        // On 4K/Ultrawide displays: Center Master in 3 equal-width columns (100% display utilization)
+        if is4K {
+            let colW = floor((workArea.width - 2 * gap) / 3.0)
+            let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+            let bottomH = workArea.height - gap - topH
 
-            // Master Terminal: Col 0, 2 rows high (~1024px x 1334px)
-            resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(termW), height: floor(2 * cellH3 + gap))
+            let col0X = workArea.origin.x
+            let col1X = workArea.origin.x + colW + gap
+            let col2X = workArea.origin.x + 2 * (colW + gap)
 
-            if count == 4 {
-                // 3 Equal-Width Columns with Master Centered:
-                // Top Tier (2/3 height): Left = Browser, Center = Master, Right = Terminal
-                // Bottom Tier (1/3 height): 1 Terminal centered under Master
-                let colW = floor((workArea.width - 2 * gap) / 3.0)
-                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
-                let bottomH = workArea.height - gap - topH
+            let topY = workArea.origin.y
+            let bottomY = workArea.origin.y + topH + gap
 
-                let col0X = workArea.origin.x
-                let col1X = workArea.origin.x + colW + gap
-                let col2X = workArea.origin.x + 2 * (colW + gap)
+            // 1. Center Top (Col 1, 2/3 height): Master Window (immer mittig, exakt gleiche Spaltenbreite colW wie die anderen!)
+            resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
 
-                let topY = workArea.origin.y
-                let bottomY = workArea.origin.y + topH + gap
+            var availableIndices = Array(1..<count)
 
-                // 1. Center Top: Master Window
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                var availableIndices = Array(1..<4)
-                let browserIdx: Int
-                if let bIdx = availableIndices.first(where: {
-                    let app = windows[$0].appName.lowercased()
-                    return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
-                }) {
-                    browserIdx = bIdx
-                } else {
-                    browserIdx = availableIndices[0]
-                }
-                availableIndices.removeAll { $0 == browserIdx }
-
-                // 2. Left Top: Browser
-                resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                // 3. Right Top: Active Secondary Terminal
-                let rightTopIdx = availableIndices.removeFirst()
-                resultFrames[rightTopIdx] = CGRect(x: floor(col2X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                // 4. Bottom Center under Master
-                let botIdx = availableIndices.removeFirst()
-                resultFrames[botIdx] = CGRect(x: floor(col1X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-
-                return resultFrames
+            // 2. Left Top (Col 0, 2/3 height): Browser oder höchstbewertete Begleit-App (Breite colW!)
+            let browserIdx: Int
+            if let bIdx = availableIndices.first(where: {
+                let app = windows[$0].appName.lowercased()
+                return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
+            }) {
+                browserIdx = bIdx
+            } else {
+                browserIdx = availableIndices[0]
             }
+            availableIndices.removeAll { $0 == browserIdx }
+            resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
 
-            if count == 5 {
-                // 3 Equal-Width Columns with Master Centered:
-                // Top Tier (2/3 height): Left = Browser, Center = Master, Right = Terminal
-                // Bottom Tier (1/3 height): 2 Terminals split evenly across bottom width
-                let colW = floor((workArea.width - 2 * gap) / 3.0)
-                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
-                let bottomH = workArea.height - gap - topH
+            // 3. Right Top (Col 2, 2/3 height): Aktivstes sekundäres Terminal (Breite colW!)
+            let rightTopIdx = availableIndices.removeFirst()
+            resultFrames[rightTopIdx] = CGRect(x: floor(col2X), y: floor(topY), width: floor(colW), height: floor(topH))
 
-                let col0X = workArea.origin.x
-                let col1X = workArea.origin.x + colW + gap
-                let col2X = workArea.origin.x + 2 * (colW + gap)
-
-                let topY = workArea.origin.y
-                let bottomY = workArea.origin.y + topH + gap
-
-                // 1. Center Top: Master Window
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                var availableIndices = Array(1..<5)
-                let browserIdx: Int
-                if let bIdx = availableIndices.first(where: {
-                    let app = windows[$0].appName.lowercased()
-                    return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
-                }) {
-                    browserIdx = bIdx
-                } else {
-                    browserIdx = availableIndices[0]
-                }
-                availableIndices.removeAll { $0 == browserIdx }
-
-                // 2. Left Top: Browser
-                resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                // 3. Right Top: Active Secondary Terminal
-                let rightTopIdx = availableIndices.removeFirst()
-                resultFrames[rightTopIdx] = CGRect(x: floor(col2X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                // 4. Bottom Row: 2 windows split evenly across bottom width
+            // 4. Bottom Tier (1/3 height): Alle verbleibenden Fenster sauber aufgeteilt
+            let remCount = availableIndices.count
+            if remCount == 1 {
+                // Ein einzelnes unteres Fenster zentriert unter Master
+                resultFrames[availableIndices[0]] = CGRect(x: floor(col1X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
+            } else if remCount == 2 {
+                // Zwei untere Fenster 50/50 geteilt
                 let botW = floor((workArea.width - gap) / 2.0)
-                let bot0Idx = availableIndices.removeFirst()
-                let bot1Idx = availableIndices.removeFirst()
-                resultFrames[bot0Idx] = CGRect(x: floor(workArea.origin.x), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
-                resultFrames[bot1Idx] = CGRect(x: floor(workArea.origin.x + botW + gap), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
-
-                return resultFrames
-            }
-
-            if count == 6 {
-                // 3 Equal-Width Columns with Master Centered:
-                // Top Tier (2/3 height): Center = Master, Left = Browser, Right = Recent Secondary Terminal
-                // Bottom Tier (1/3 height): 3 Terminals side-by-side across the bottom (Left, Center, Right)
-                let colW = floor((workArea.width - 2 * gap) / 3.0)
-                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
-                let bottomH = workArea.height - gap - topH
-
-                let col0X = workArea.origin.x
-                let col1X = workArea.origin.x + colW + gap
-                let col2X = workArea.origin.x + 2 * (colW + gap)
-
-                let topY = workArea.origin.y
-                let bottomY = workArea.origin.y + topH + gap
-
-                // 1. Col 1 Top (Center, 2/3 height): Master window (ergonomisch direkt mittig im Blickfeld!)
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                var availableIndices = Array(1..<6)
-
-                // 2. Col 0 Top (Left, 2/3 height): Browser or highest-scoring non-master window
-                let browserIdx: Int
-                if let bIdx = availableIndices.first(where: {
-                    let app = windows[$0].appName.lowercased()
-                    return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
-                }) {
-                    browserIdx = bIdx
-                } else {
-                    browserIdx = availableIndices[0]
+                resultFrames[availableIndices[0]] = CGRect(x: floor(workArea.origin.x), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
+                resultFrames[availableIndices[1]] = CGRect(x: floor(workArea.origin.x + botW + gap), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
+            } else if remCount == 3 {
+                // Exakt 3 untere Fenster, je eins unter Col 0, Col 1, Col 2 (alle Breite colW!)
+                resultFrames[availableIndices[0]] = CGRect(x: floor(col0X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
+                resultFrames[availableIndices[1]] = CGRect(x: floor(col1X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
+                resultFrames[availableIndices[2]] = CGRect(x: floor(col2X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
+            } else if remCount >= 4 {
+                // 4+ untere Fenster gleichmäßig nebeneinander (z. B. bei 7 Fenstern = 4 Terminals je ~940px)
+                let botW = floor((workArea.width - CGFloat(remCount - 1) * gap) / CGFloat(remCount))
+                for (i, bIdx) in availableIndices.enumerated() {
+                    let bx = workArea.origin.x + CGFloat(i) * (botW + gap)
+                    resultFrames[bIdx] = CGRect(x: floor(bx), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
                 }
-                availableIndices.removeAll { $0 == browserIdx }
-                resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                // 3. Col 2 Top (Right, 2/3 height): The most recently active secondary terminal
-                let rightTopIdx = availableIndices.removeFirst()
-                resultFrames[rightTopIdx] = CGRect(x: floor(col2X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-                // 4. Bottom Row: 3 Terminals across Col 0, Col 1, Col 2 (1/3 height each)
-                let bot0Idx = availableIndices.removeFirst()
-                resultFrames[bot0Idx] = CGRect(x: floor(col0X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-
-                let bot1Idx = availableIndices.removeFirst()
-                resultFrames[bot1Idx] = CGRect(x: floor(col1X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-
-                let bot2Idx = availableIndices.removeFirst()
-                resultFrames[bot2Idx] = CGRect(x: floor(col2X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-
-                return resultFrames
             }
 
-            // 7+ Windows: Terminal Master (~1024px) + right area tiled evenly
-            resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + 2 * (cellH3 + gap)), width: floor(termW), height: floor(cellH3))
-            let remList = Array(windows.indices.dropFirst(2))
-            let rightRows = max(1, (remList.count + 1) / 2)
-            let rightH = (workArea.height - CGFloat(rightRows - 1) * gap) / CGFloat(rightRows)
-            for (idx, rIdx) in remList.enumerated() {
-                let col = idx % 2
-                let row = idx / 2
-                let cx = col == 0 ? col1X : col2X
-                let cy = workArea.origin.y + CGFloat(row) * (rightH + gap)
-                resultFrames[rIdx] = CGRect(x: floor(cx), y: floor(cy), width: floor(remColW), height: floor(rightH))
-            }
             return resultFrames
         }
 

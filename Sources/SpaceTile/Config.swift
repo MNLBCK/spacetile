@@ -29,7 +29,7 @@ struct AppWeightConfig: Codable, Identifiable {
 }
 
 struct Config: Codable {
-    static let version = "1.5.3"
+    static let version = "1.5.4"
 
     // Shortcuts
     var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)
@@ -89,11 +89,11 @@ struct Config: Codable {
         self.sideBySideForNotesAndBrowser = sideBySideForNotesAndBrowser
         self.enableSpaceLearning = enableSpaceLearning
         self.appWeights = appWeights ?? [
-            AppWeightConfig(appName: "iTerm2", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
-            AppWeightConfig(appName: "Terminal", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
-            AppWeightConfig(appName: "Ghostty", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
-            AppWeightConfig(appName: "Alacritty", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
-            AppWeightConfig(appName: "kitty", score: 32, minWidth: 650, minHeight: 380, maxWidth: 1024),
+            AppWeightConfig(appName: "iTerm2", score: 32, minWidth: 650, minHeight: 380, maxWidth: nil),
+            AppWeightConfig(appName: "Terminal", score: 32, minWidth: 650, minHeight: 380, maxWidth: nil),
+            AppWeightConfig(appName: "Ghostty", score: 32, minWidth: 650, minHeight: 380, maxWidth: nil),
+            AppWeightConfig(appName: "Alacritty", score: 32, minWidth: 650, minHeight: 380, maxWidth: nil),
+            AppWeightConfig(appName: "kitty", score: 32, minWidth: 650, minHeight: 380, maxWidth: nil),
             AppWeightConfig(appName: "Google Chrome", score: 72, minWidth: 500, minHeight: 400, maxWidth: nil),
             AppWeightConfig(appName: "Safari", score: 70, minWidth: 500, minHeight: 400, maxWidth: nil),
             AppWeightConfig(appName: "Arc", score: 70, minWidth: 500, minHeight: 400, maxWidth: nil),
