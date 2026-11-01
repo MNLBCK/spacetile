@@ -1012,7 +1012,7 @@ struct SettingsView: View {
                     Divider()
                     shortcutRow(
                         title: "Set Window as Master",
-                        desc: "Setzt das fokussierte Fenster als Master in die ergonomische Mitte",
+                        desc: "Setzt das fokussierte Fenster als Master (schnelles doppeltes Drücken hebt Master auf)",
                         shortcut: config.masterShortcut,
                         field: "master"
                     )

@@ -23,7 +23,7 @@ func printHelp() {
 
     \u{001B}[1mSTANDARD-SHORTCUTS:\u{001B}[0m
       Hyper + Leertaste  (⌃⌥⇧⌘ + Space)  ➔ Fenster optimieren
-      Hyper + Return     (⌃⌥⇧⌘ + Enter)  ➔ Als Master-Fenster setzen
+      Hyper + Return     (⌃⌥⇧⌘ + Enter)  ➔ Als Master-Fenster setzen (Doppeltipp: Master aufheben)
       Hyper + L          (⌃⌥⇧⌘ + L)      ➔ Fensterposition sperren (Lock)
       Hyper + F          (⌃⌥⇧⌘ + F)      ➔ Floating Fenster (Always on Top, ignoriert beim Tiling)
       Hyper + S          (⌃⌥⇧⌘ + S)      ➔ Einstellungen GUI öffnen

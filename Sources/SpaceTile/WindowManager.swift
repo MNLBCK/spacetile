@@ -30,6 +30,7 @@ class WindowManager {
     private(set) var masterWindowID: CGWindowID?
     private(set) var windowScoreOverrides: [CGWindowID: Int] = [:]
     private var lastRunTime: Date?
+    private var lastMasterShortcutTimestamp: TimeInterval = 0
 
     func setWindowScoreOverride(id: CGWindowID, score: Int) {
         stateLock.lock()
@@ -372,6 +373,19 @@ class WindowManager {
     }
 
     func setFocusedAsMaster() -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        let interval = now - lastMasterShortcutTimestamp
+        lastMasterShortcutTimestamp = now
+
+        let doubleTapThreshold: TimeInterval = max(0.45, NSEvent.doubleClickInterval)
+
+        if interval < doubleTapThreshold {
+            lastMasterShortcutTimestamp = 0
+            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Double-tap Hyper+Return -> Master deaktiviert (Gleichmäßiges Raster ohne Master).")
+            clearMasterWindow()
+            return true
+        }
+
         guard let front = NSWorkspace.shared.frontmostApplication else { return false }
         if front.processIdentifier == ProcessInfo.processInfo.processIdentifier || front.localizedName == "SpaceTile" {
             return false
