@@ -36,26 +36,14 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
                 defer: false
             )
 
-            win.setFrameAutosaveName("SpaceTileSettingsWindow")
-            if !win.setFrameUsingName("SpaceTileSettingsWindow") {
-                // Position window to avoid blocking the center of the screen
-                // where macOS system permission dialogs and alerts spawn
-                if let screen = NSScreen.main ?? NSScreen.screens.first {
-                    let vf = screen.visibleFrame
-                    let x: CGFloat
-                    if vf.width >= 2560 {
-                        // On wide/4K displays: place in left third so center (system dialogs) is 100% clear
-                        x = max(vf.origin.x + 80, (vf.width * 0.28) - (winWidth / 2.0))
-                    } else if vf.width >= 1600 {
-                        x = max(vf.origin.x + 40, (vf.width - winWidth) / 2.0 - 200)
-                    } else {
-                        x = max(vf.origin.x + 20, (vf.width - winWidth) / 2.0)
-                    }
-                    let y = vf.origin.y + (vf.height - winHeight) / 2.0
-                    win.setFrameOrigin(NSPoint(x: round(x), y: round(y)))
-                } else {
-                    win.center()
-                }
+            // Center settings window reliably in the middle of the active monitor
+            if let screen = NSScreen.main ?? NSScreen.screens.first {
+                let vf = screen.visibleFrame
+                let centerX = vf.origin.x + (vf.width - winWidth) / 2.0
+                let centerY = vf.origin.y + (vf.height - winHeight) / 2.0
+                win.setFrameOrigin(NSPoint(x: round(centerX), y: round(centerY)))
+            } else {
+                win.center()
             }
 
             win.title = "SpaceTile Settings"

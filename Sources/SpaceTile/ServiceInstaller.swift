@@ -111,13 +111,22 @@ struct ServiceInstaller {
         let pkgInfoURL = appURL.appendingPathComponent("Contents/PkgInfo")
         try? "APPL????".write(to: pkgInfoURL, atomically: true, encoding: .utf8)
 
-        // 5. Deep Sign Bundle with Stable Identifier
+        // 5. Deep Sign Bundle with Stable Identifier and Explicit Designated Requirement
+        // Using '--requirements' ensures that macOS TCC (Accessibility) does not invalidate
+        // permissions when the binary cdhash changes across rebuilds!
         let signProcess = Process()
         signProcess.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        signProcess.arguments = ["-s", "-", "--force", "--deep", "--identifier", label, appURL.path]
+        signProcess.arguments = [
+            "-s", "-",
+            "--force",
+            "--deep",
+            "--identifier", label,
+            "--requirements", "=designated => identifier \"\(label)\"",
+            appURL.path
+        ]
         try? signProcess.run()
         signProcess.waitUntilExit()
-        print("[\u{001B}[32mOK\u{001B}[0m] Signed SpaceTile.app with identifier '\(label)'")
+        print("[\u{001B}[32mOK\u{001B}[0m] Signed SpaceTile.app with stable designated requirement '\(label)'")
 
         // 6. Create CLI Symlink at ~/.local/bin/spacetile
         let binDir = symlinkDestination.deletingLastPathComponent()

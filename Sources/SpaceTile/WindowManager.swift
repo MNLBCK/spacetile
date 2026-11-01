@@ -28,7 +28,48 @@ class WindowManager {
     private(set) var lockedWindowIDs: Set<CGWindowID> = []
     private(set) var floatingWindowIDs: Set<CGWindowID> = []
     private(set) var masterWindowID: CGWindowID?
+    private(set) var windowScoreOverrides: [CGWindowID: Int] = [:]
     private var lastRunTime: Date?
+
+    func setWindowScoreOverride(id: CGWindowID, score: Int) {
+        stateLock.lock()
+        windowScoreOverrides[id] = max(10, min(100, score))
+        stateLock.unlock()
+    }
+
+    func swapWindowPositions(idA: CGWindowID, idB: CGWindowID) {
+        guard WindowManager.ensureAccessibility(prompt: false) else { return }
+        guard let screen = findTargetScreen() ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let primaryH = NSScreen.screens.first?.frame.height ?? screen.frame.height
+        let vf = screen.visibleFrame
+        let axRect = CGRect(x: vf.origin.x, y: primaryH - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
+        let config = Config.load()
+        let wins = collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps), config: config)
+
+        guard let winA = wins.first(where: { $0.id == idA }), let elemA = winA.element,
+              let winB = wins.first(where: { $0.id == idB }), let elemB = winB.element else { return }
+
+        let frameA = winA.currentFrame
+        let frameB = winB.currentFrame
+
+        // Physically exchange their frames on screen
+        setWindowFrameImmediate(elemA, target: frameB)
+        setWindowFrameImmediate(elemB, target: frameA)
+
+        // If one of them was master, update masterWindowID
+        if masterWindowID == idA {
+            setMasterWindow(id: idB)
+        } else if masterWindowID == idB {
+            setMasterWindow(id: idA)
+        }
+
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+    }
 
     static var lockedStoreURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -1199,9 +1240,21 @@ class WindowManager {
                 let isFloating = floatingWindowIDs.contains(winID)
                 let currentFrame = getWindowFrame(win) ?? info.bounds
 
-                // Scoring lookup
+                // Scoring lookup: App weight -> Window Rule (by title) -> Live ID override
                 let weightConfig = config.appWeights.first(where: { $0.appName.lowercased() == appName.lowercased() })
-                let score = weightConfig?.score ?? defaultScoreFor(appName: appName)
+                var score = weightConfig?.score ?? defaultScoreFor(appName: appName)
+
+                if let rule = config.windowRules.first(where: { rule in
+                    (rule.appName == nil || rule.appName?.lowercased() == appName.lowercased()) &&
+                    title.localizedCaseInsensitiveContains(rule.pattern)
+                }) {
+                    score = rule.score
+                }
+
+                if let overrideScore = windowScoreOverrides[winID] {
+                    score = overrideScore
+                }
+
                 let minW = weightConfig?.minWidth ?? 450
                 let minH = weightConfig?.minHeight ?? 350
                 let maxW = weightConfig?.maxWidth
@@ -1228,7 +1281,19 @@ class WindowManager {
         for (winID, info) in onScreenMap {
             if !matchedIDs.contains(winID) && (lockedWindowIDs.contains(winID) || floatingWindowIDs.contains(winID)) {
                 let weightConfig = config.appWeights.first(where: { $0.appName.lowercased() == info.owner.lowercased() })
-                let score = weightConfig?.score ?? defaultScoreFor(appName: info.owner)
+                var score = weightConfig?.score ?? defaultScoreFor(appName: info.owner)
+
+                if let rule = config.windowRules.first(where: { rule in
+                    (rule.appName == nil || rule.appName?.lowercased() == info.owner.lowercased()) &&
+                    info.title.localizedCaseInsensitiveContains(rule.pattern)
+                }) {
+                    score = rule.score
+                }
+
+                if let overrideScore = windowScoreOverrides[winID] {
+                    score = overrideScore
+                }
+
                 let minW = weightConfig?.minWidth ?? 450
                 let minH = weightConfig?.minHeight ?? 350
                 let maxW = weightConfig?.maxWidth

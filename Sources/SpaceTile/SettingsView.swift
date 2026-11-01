@@ -460,6 +460,10 @@ struct SettingsView: View {
     @State private var recentLogs: [String] = ServiceInstaller.getRecentLogs()
     @State private var localEventMonitor: Any? = nil
 
+    @State private var newRulePattern: String = ""
+    @State private var newRuleScore: Int = 75
+    @State private var newRuleAppName: String = ""
+
     static func loadAppIcon() -> NSImage? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let paths = [
@@ -481,8 +485,8 @@ struct SettingsView: View {
         switch tabName?.lowercased() {
         case "grid", "live", "space", "0": tab = 0
         case "shortcuts", "hotkeys", "1": tab = 1
-        case "scoring", "scores", "weights", "apps", "2": tab = 2
-        case "memory", "spacememory", "brain", "3": tab = 3
+        case "spacing", "layout", "motion", "2": tab = 2
+        case "scoring", "scores", "weights", "apps", "memory", "spacememory", "rules", "3": tab = 3
         case "daemon", "logs", "4": tab = 4
         case "about", "info", "5": tab = 5
         default: tab = 0
@@ -601,9 +605,9 @@ struct SettingsView: View {
             // Segmented Tabs
             Picker("", selection: $selectedTab) {
                 Text("Live Grid").tag(0)
-                Text("Shortcuts & Spacing").tag(1)
-                Text("Window Weights").tag(2)
-                Text("SpaceMemory").tag(3)
+                Text("Shortcuts").tag(1)
+                Text("Spacing & Motion").tag(2)
+                Text("Weights & Memory").tag(3)
                 Text("Daemon").tag(4)
                 Text("About SpaceTile").tag(5)
             }
@@ -617,8 +621,8 @@ struct SettingsView: View {
                 switch selectedTab {
                 case 0: liveGridTab
                 case 1: shortcutsTab
-                case 2: windowWeightsTab
-                case 3: spaceMemoryTab
+                case 2: spacingTab
+                case 3: weightsAndMemoryTab
                 case 4: daemonTab
                 case 5: aboutTab
                 default: EmptyView()
@@ -711,8 +715,8 @@ struct SettingsView: View {
                 switch tabName.lowercased() {
                 case "grid", "live", "space", "0": selectedTab = 0
                 case "shortcuts", "hotkeys", "1": selectedTab = 1
-                case "scoring", "scores", "weights", "apps", "2": selectedTab = 2
-                case "memory", "spacememory", "brain", "3": selectedTab = 3
+                case "spacing", "layout", "motion", "2": selectedTab = 2
+                case "scoring", "scores", "weights", "apps", "memory", "spacememory", "rules", "3": selectedTab = 3
                 case "daemon", "logs", "4": selectedTab = 4
                 case "about", "info", "5": selectedTab = 5
                 default: break
@@ -751,7 +755,7 @@ struct SettingsView: View {
             )
 
             HStack {
-                Text("Recognized Windows on Current Space (\(currentWindows.count)):")
+                Text("Erkannte Fenster auf aktuellem Space (\(currentWindows.count)):")
                     .font(.subheadline.bold())
                 Spacer()
                 Button(action: refreshData) {
@@ -763,15 +767,45 @@ struct SettingsView: View {
 
             if currentWindows.isEmpty {
                 VStack(spacing: 4) {
-                    Text("No manageable windows detected.")
+                    Text("Keine verwaltbaren Fenster erkannt.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 8)
             } else {
+                // Table Column Headers for Clean Visual Alignment
+                HStack(spacing: 8) {
+                    Text("Programm")
+                        .font(.caption2.bold())
+                        .foregroundColor(.secondary)
+                        .frame(width: 125, alignment: .leading)
+
+                    Text("Status")
+                        .font(.caption2.bold())
+                        .foregroundColor(.secondary)
+                        .frame(width: 82, alignment: .center)
+
+                    Text("Gewicht")
+                        .font(.caption2.bold())
+                        .foregroundColor(.secondary)
+                        .frame(width: 78, alignment: .center)
+
+                    Text("Fenstertitel")
+                        .font(.caption2.bold())
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("Aktionen")
+                        .font(.caption2.bold())
+                        .foregroundColor(.secondary)
+                        .frame(width: 215, alignment: .trailing)
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 5) {
                         ForEach(Array(currentWindows.enumerated()), id: \.element.id) { index, win in
                             activeWindowRow(index: index, win: win)
                         }
@@ -785,73 +819,134 @@ struct SettingsView: View {
     }
 
     private func activeWindowRow(index: Int, win: ManagedWindow) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(win.appName).fontWeight(.bold)
-                    if win.isFloating {
-                        Text("✈ Floating")
-                            .font(.caption2.bold())
-                            .foregroundColor(.purple)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Color.purple.opacity(0.15))
-                            .cornerRadius(4)
-                    } else if win.isLocked {
-                        Text("🔒 Locked")
-                            .font(.caption2.bold())
-                            .foregroundColor(.orange)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Color.orange.opacity(0.15))
-                            .cornerRadius(4)
-                    } else if index == 0 {
-                        Text("★ Master")
-                            .font(.caption2.bold())
-                            .foregroundColor(.green)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Color.green.opacity(0.15))
-                            .cornerRadius(4)
-                    }
-                    Text("Score: \(win.score)")
-                        .font(.caption2.monospaced())
+        HStack(spacing: 8) {
+            // 1. App Name (fixed 125px)
+            Text(win.appName)
+                .font(.subheadline.bold())
+                .frame(width: 125, alignment: .leading)
+                .lineLimit(1)
+
+            // 2. Status Badge (fixed 82px)
+            Group {
+                if win.isFloating {
+                    Text("✈ Floating")
+                        .font(.caption2.bold())
+                        .foregroundColor(.purple)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.purple.opacity(0.18))
+                        .cornerRadius(4)
+                } else if win.isLocked {
+                    Text("🔒 Locked")
+                        .font(.caption2.bold())
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.18))
+                        .cornerRadius(4)
+                } else if index == 0 {
+                    Text("★ Master")
+                        .font(.caption2.bold())
+                        .foregroundColor(.green)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.green.opacity(0.18))
+                        .cornerRadius(4)
+                } else {
+                    Text("Tiled")
+                        .font(.caption2)
                         .foregroundColor(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.08))
+                        .cornerRadius(4)
                 }
-                Text(win.title.isEmpty ? "(No title)" : win.title)
-                    .font(.caption).foregroundColor(.secondary).lineLimit(1)
             }
+            .frame(width: 82, alignment: .center)
 
-            Spacer()
+            // 3. Weight / Score Stepper for THIS concrete window (fixed 78px)
+            HStack(spacing: 2) {
+                Button(action: {
+                    let newScore = max(10, win.score - 5)
+                    WindowManager.shared.setWindowScoreOverride(id: win.id, score: newScore)
+                    refreshData()
+                }) {
+                    Text("-")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 14, height: 16)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
 
-            Button(win.isFloating ? "Unfloat" : "Float") {
-                WindowManager.shared.setWindowFloating(id: win.id, floating: !win.isFloating)
-                refreshData()
+                Text("\(win.score)")
+                    .font(.caption.monospaced().bold())
+                    .foregroundColor(win.score > 65 ? .cyan : (win.score < 36 ? .orange : .primary))
+                    .frame(width: 26, alignment: .center)
+
+                Button(action: {
+                    let newScore = min(100, win.score + 5)
+                    WindowManager.shared.setWindowScoreOverride(id: win.id, score: newScore)
+                    refreshData()
+                }) {
+                    Text("+")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 14, height: 16)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
             }
-            .buttonStyle(.bordered)
-            .tint(win.isFloating ? .purple : .primary)
-            .help("Keep window always on top in the foreground and ignore during tiling")
+            .frame(width: 78, alignment: .center)
 
-            if !win.isFloating {
-                Button(win.isLocked ? "Unlock" : "Lock Position") {
-                    WindowManager.shared.setWindowLocked(id: win.id, locked: !win.isLocked)
+            // 4. Window Title (Middle-truncated, takes remaining space)
+            Text(win.title.isEmpty ? "(Kein Fenstertitel)" : win.title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // 5. Action Buttons (fixed 215px, aligned columns)
+            HStack(spacing: 6) {
+                Button(win.isFloating ? "Unfloat" : "Float") {
+                    WindowManager.shared.setWindowFloating(id: win.id, floating: !win.isFloating)
                     refreshData()
                 }
                 .buttonStyle(.bordered)
-            }
+                .tint(win.isFloating ? .purple : .primary)
+                .controlSize(.small)
+                .frame(width: 65)
 
-            if index == 0 && WindowManager.shared.masterWindowID != nil {
-                Button("Auto Master") {
-                    clearMaster()
+                if !win.isFloating {
+                    Button(win.isLocked ? "Unlock" : "Lock") {
+                        WindowManager.shared.setWindowLocked(id: win.id, locked: !win.isLocked)
+                        refreshData()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(width: 65)
+                } else {
+                    Spacer().frame(width: 65)
                 }
-                .buttonStyle(.bordered)
-                .help("Revert master window choice to automatic scoring")
-            } else if index != 0 && !win.isLocked && !win.isFloating {
-                Button("Set as Master") {
-                    promoteToMaster(id: win.id, appName: win.appName)
+
+                if index == 0 && WindowManager.shared.masterWindowID != nil {
+                    Button("Auto") {
+                        clearMaster()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(width: 72)
+                } else if index != 0 && !win.isLocked && !win.isFloating {
+                    Button("Set Master") {
+                        promoteToMaster(id: win.id, appName: win.appName)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+                    .controlSize(.small)
+                    .frame(width: 72)
+                } else {
+                    Spacer().frame(width: 72)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.cyan)
             }
+            .frame(width: 215, alignment: .trailing)
         }
-        .padding(6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(Color.secondary.opacity(index == 0 ? 0.12 : 0.05))
         .cornerRadius(6)
         .contentShape(Rectangle())
@@ -862,181 +957,421 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Tab 1: Shortcuts & Spacing (with multi-step smoothness & content freeze)
+    // MARK: - Tab 1: Shortcuts (Large Legible Badges, Single Hyper Explanation)
     var shortcutsTab: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            GroupBox(label: Label("Global Hotkeys (Record New)", systemImage: "keyboard")) {
-                VStack(spacing: 6) {
-                    shortcutRow(title: "Rearrange Windows", desc: "Tiles all windows into the dynamic grid", shortcut: config.shortcut, field: "optimize")
-                    Divider()
-                    shortcutRow(title: "Set Window as Master", desc: "Promotes focused window to master slot", shortcut: config.masterShortcut, field: "master")
-                    Divider()
-                    shortcutRow(title: "Lock/Unlock Active Window", desc: "Locks window in place; reserves its grid tiles", shortcut: config.lockShortcut, field: "lock")
-                    Divider()
-                    shortcutRow(title: "Toggle Floating Window", desc: "Pins window on top; ignored by tiling engine", shortcut: config.floatShortcut, field: "float")
-                    Divider()
-                    shortcutRow(title: "Open Settings GUI", desc: "Opens this configuration window", shortcut: config.guiShortcut, field: "gui")
-                }
-                .padding(5)
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox {
+                HStack(spacing: 14) {
+                    Image(systemName: "command.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(.cyan)
 
-            GroupBox(label: Label("Grid & Window Sizing", systemImage: "square.grid.3x3")) {
-                HStack(spacing: 24) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Inner Gap:")
-                            Slider(value: $config.gap, in: 0...32, step: 1)
-                            Text("\(Int(config.gap)) px").font(.caption.monospaced()).frame(width: 45)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Outer Margin:")
-                            Slider(value: $config.margin, in: 0...48, step: 1)
-                            Text("\(Int(config.margin)) px").font(.caption.monospaced()).frame(width: 45)
-                        }
-                    }
-                }
-                .padding(5)
-            }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Hyper Key = ⌃ Control + ⌥ Option + ⇧ Shift + ⌘ Command")
+                            .font(.headline)
+                            .foregroundColor(.primary)
 
-            GroupBox(label: Label("Window Animation & Smoothness", systemImage: "speedometer")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 12) {
-                        Text("Mode:")
-                            .font(.subheadline.bold())
-                            .fixedSize()
-
-                        Picker("", selection: $config.animationMode) {
-                            Text("Direct (Zero-Lag Snap)").tag("instant")
-                            Text("Smooth Motion Glide").tag("smooth")
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 320)
-
-                        Text(config.animationMode == "instant" ? "Instant snap, zero lag, no IPC stutter." : "Multi-step cubic ease glide.")
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-
-                    if config.animationMode == "smooth" {
-                        HStack(spacing: 24) {
-                            HStack {
-                                Text("Duration:")
-                                Slider(value: $config.animationDuration, in: 0.06...0.35, step: 0.02)
-                                Text("\(Int(config.animationDuration * 1000)) ms").font(.caption.monospaced()).frame(width: 55)
-                            }
-
-                            HStack {
-                                Text("Steps:")
-                                Slider(value: Binding(
-                                    get: { Double(config.animationSteps) },
-                                    set: { config.animationSteps = Int($0) }
-                                ), in: 4...20, step: 1)
-                                Text("\(config.animationSteps) frames").font(.caption.monospaced()).frame(width: 65)
-                            }
-                        }
-
-                        Toggle("Freeze window content redraw during resize (Atomic Display Sync)", isOn: $config.freezeContentDuringResize)
-                            .font(.caption.bold())
-                        Text("Uses SkyLight CGSDisableUpdate/CGSReenableUpdate to prevent apps (Chrome, VSCode, iTerm2) from layout-thrashing on every intermediate frame.")
-                            .font(.caption2)
+                        Text("Tipp: In Tools wie Karabiner-Elements oder Raycast kann die Feststelltaste (Caps Lock) als Hyper belegt werden – für extrem schnelle Ein-Finger-Bedienung.")
+                            .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                    Spacer()
                 }
-                .padding(5)
+                .padding(6)
+            }
+
+            GroupBox(label: Label("Globale Tastenkombinationen (Hotkeys)", systemImage: "keyboard")) {
+                VStack(spacing: 8) {
+                    shortcutRow(
+                        title: "Rearrange Windows",
+                        desc: "Ordnet alle Fenster im aktuellen Space sofort im dynamischen Raster an",
+                        shortcut: config.shortcut,
+                        field: "optimize"
+                    )
+                    Divider()
+                    shortcutRow(
+                        title: "Set Window as Master",
+                        desc: "Setzt das fokussierte Fenster als Master in die ergonomische Mitte",
+                        shortcut: config.masterShortcut,
+                        field: "master"
+                    )
+                    Divider()
+                    shortcutRow(
+                        title: "Lock/Unlock Active Window",
+                        desc: "Sperrt Fenster an seiner Position; reserviert dessen Raster-Kacheln",
+                        shortcut: config.lockShortcut,
+                        field: "lock"
+                    )
+                    Divider()
+                    shortcutRow(
+                        title: "Toggle Floating Window",
+                        desc: "Schwebt zentriert Always-on-Top im Vordergrund; wird beim Tiling ignoriert",
+                        shortcut: config.floatShortcut,
+                        field: "float"
+                    )
+                    Divider()
+                    shortcutRow(
+                        title: "Open Settings GUI",
+                        desc: "Öffnet dieses Einstellungsfenster zentriert auf dem Bildschirm",
+                        shortcut: config.guiShortcut,
+                        field: "gui"
+                    )
+                }
+                .padding(8)
             }
         }
     }
 
     private func shortcutRow(title: String, desc: String, shortcut: ShortcutConfig, field: String) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).fontWeight(.medium)
-                Text(desc).font(.caption).foregroundColor(.secondary)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                Text(desc)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             Spacer()
             if recordingField == field {
-                Button("Press Keys on Keyboard...") { stopRecording() }
+                Button("Tasten auf der Tastatur drücken...") { stopRecording() }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
             } else {
-                Text(shortcut.displayString)
-                    .padding(.horizontal, 10).padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.12))
+                Text(shortcut.cleanDisplayString)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(.cyan)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(Color.cyan.opacity(0.12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
+                    )
                     .cornerRadius(6)
-                    .font(.system(.caption, design: .monospaced))
 
-                Button("Record New") { startRecording(field: field) }
+                Button("Neu aufnehmen") { startRecording(field: field) }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Tab 2: Spacing & Motion (Grid Sizing, Motion Glide, SkyLight Freezing)
+    var spacingTab: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox(label: Label("Raster & Bildschirmabstände", systemImage: "square.grid.3x3")) {
+                VStack(spacing: 12) {
+                    HStack(spacing: 24) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Innerer Abstand (Gap):")
+                                    .fontWeight(.medium)
+                                Slider(value: $config.gap, in: 0...32, step: 1)
+                                Text("\(Int(config.gap)) px")
+                                    .font(.caption.monospaced().bold())
+                                    .frame(width: 45)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Äußerer Rand (Margin):")
+                                    .fontWeight(.medium)
+                                Slider(value: $config.margin, in: 0...48, step: 1)
+                                Text("\(Int(config.margin)) px")
+                                    .font(.caption.monospaced().bold())
+                                    .frame(width: 45)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    HStack {
+                        Text("Einzel-Fenster Modus:")
+                            .fontWeight(.medium)
+                        Picker("", selection: $config.singleWindowMode) {
+                            Text("Zentriert (Ergonomisch)").tag("centered")
+                            Text("Maximiert (Volle Arbeitsfläche)").tag("maximized")
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 320)
+                    }
+                }
+                .padding(8)
+            }
+
+            GroupBox(label: Label("Fenster-Animation & Glätte", systemImage: "speedometer")) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 14) {
+                        Text("Bewegungsmodus:")
+                            .font(.subheadline.bold())
+
+                        Picker("", selection: $config.animationMode) {
+                            Text("Direkt (Sofortiges Einrasten, Zero-Lag)").tag("instant")
+                            Text("Flüssige Gleit-Animation (Smooth Glide)").tag("smooth")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 420)
+                    }
+
+                    if config.animationMode == "smooth" {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 24) {
+                                HStack {
+                                    Text("Dauer:")
+                                    Slider(value: $config.animationDuration, in: 0.06...0.35, step: 0.02)
+                                    Text("\(Int(config.animationDuration * 1000)) ms")
+                                        .font(.caption.monospaced().bold())
+                                        .frame(width: 55)
+                                }
+
+                                HStack {
+                                    Text("Schritte:")
+                                    Slider(value: Binding(
+                                        get: { Double(config.animationSteps) },
+                                        set: { config.animationSteps = Int($0) }
+                                    ), in: 4...20, step: 1)
+                                    Text("\(config.animationSteps) Frames")
+                                        .font(.caption.monospaced().bold())
+                                        .frame(width: 65)
+                                }
+                            }
+
+                            Toggle("Fensterinhalte während Animation einfrieren (SkyLight Atomic Sync)", isOn: $config.freezeContentDuringResize)
+                                .font(.caption.bold())
+                            Text("Nutzt macOS SkyLight CGSDisableUpdate/CGSReenableUpdate, damit schwere Apps (Chrome, VS Code, iTerm2) nicht bei jedem Zwischenschritt neu berechnen.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(8)
             }
         }
     }
 
-    // MARK: - Tab 2: Window Weights (Interactive Steppers & Appetite)
-    var windowWeightsTab: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("App Appetite & Grid Weights")
-                        .font(.headline)
-                    Text("Influence how much space each application claims. Higher weights receive more columns (or master focus), while lower weights stay compact.")
-                        .font(.caption).foregroundColor(.secondary)
+    // MARK: - Tab 3: Weights & Memory (App Weights, Concrete Window Rules & SpaceMemory)
+    var weightsAndMemoryTab: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 14) {
+                // Header Bar
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Fenster-Gewichtung & Adaptives Gedächtnis")
+                            .font(.headline)
+                        Text("Bestimmt die Priorität von Programmen und konkreten Fenstern. Höhere Gewichte (66-100) erhalten mehr Spalten oder den Master-Fokus, kompakte Gewichte (10-35) bleiben schmal.")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    HStack(spacing: 8) {
+                        scoreBadge(label: "Kompakt (10-35)", color: .orange)
+                        scoreBadge(label: "Ausgewogen (36-65)", color: .blue)
+                        scoreBadge(label: "Breit (66-100)", color: .cyan)
+                    }
                 }
-                Spacer()
-                HStack(spacing: 8) {
-                    scoreBadge(label: "Compact (10-35)", color: .orange)
-                    scoreBadge(label: "Balanced (36-65)", color: .blue)
-                    scoreBadge(label: "Wide (66-100)", color: .cyan)
+
+                // Section 1: Programm-Kategorien (Standard-Gewichte)
+                GroupBox(label: Label("Programm-Kategorien (Standard-Gewichte)", systemImage: "square.stack.3d.up")) {
+                    VStack(spacing: 6) {
+                        weightCategoryRow(
+                            title: "Terminal Apps",
+                            appsList: ["iTerm2", "Terminal", "Ghostty", "kitty", "Alacritty"],
+                            desc: "Kompakte Arbeitsbreite; ideal für Shell & Logs",
+                            icon: "terminal"
+                        )
+                        weightCategoryRow(
+                            title: "Web Browser",
+                            appsList: ["Google Chrome", "Safari", "Arc", "Firefox"],
+                            desc: "Breitere Ansicht für moderne Webseiten & DevTools",
+                            icon: "globe"
+                        )
+                        weightCategoryRow(
+                            title: "Code Editoren",
+                            appsList: ["Code", "Xcode", "Cursor"],
+                            desc: "Großzügige Code-Ansicht für Sidebars und Split-Panes",
+                            icon: "chevron.left.forwardslash.chevron.right"
+                        )
+                        weightCategoryRow(
+                            title: "Notizen & Dokumente",
+                            appsList: ["Obsidian", "Notes", "Bear"],
+                            desc: "Ausgewogene Lesebreite; 50/50 gepaart mit Browser",
+                            icon: "note.text"
+                        )
+                    }
+                    .padding(4)
                 }
-            }
 
-            // Category Level Quick Adjustments
-            VStack(spacing: 6) {
-                weightCategoryRow(
-                    title: "Terminal Apps",
-                    appsList: ["iTerm2", "Terminal", "Ghostty", "kitty", "Alacritty"],
-                    desc: "Capped to 3 columns on 10x6 4K grid (~1024px width)",
-                    icon: "terminal"
-                )
-                weightCategoryRow(
-                    title: "Web Browsers",
-                    appsList: ["Google Chrome", "Safari", "Arc", "Firefox"],
-                    desc: "Claims 6-7 columns on 10x6 grid (2300px+)",
-                    icon: "globe"
-                )
-                weightCategoryRow(
-                    title: "Code Editors",
-                    appsList: ["Code", "Xcode", "Cursor"],
-                    desc: "Generous code viewing width for sidebars & split panes",
-                    icon: "chevron.left.forwardslash.chevron.right"
-                )
-                weightCategoryRow(
-                    title: "Notes & Documents",
-                    appsList: ["Obsidian", "Notes", "Bear"],
-                    desc: "Balanced reading column; 50/50 when paired with browser",
-                    icon: "note.text"
-                )
-            }
+                // Section 2: Konkrete Fensterregeln (Titel-Erkennung)
+                GroupBox(label: Label("Konkrete Fensterregeln (Titel-Erkennung)", systemImage: "sparkle.magnifyingglass")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Weisen Sie spezifischen Einzelfenstern anhand ihres Fenstertitels ein eigenes Gewicht zu (z. B. Terminal mit 'openclaw' oder 'nvim' -> Score 85).")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
 
-            // Fine-grained Individual App Weights List
-            GroupBox(label: Label("Fine-Grained App Rules", systemImage: "slider.horizontal.3")) {
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 4) {
-                        ForEach(config.appWeights) { appWeight in
-                            individualAppWeightRow(item: appWeight)
+                        // Add Rule Form
+                        HStack(spacing: 8) {
+                            TextField("Titel enthält (z. B. openclaw, nvim, logs)", text: $newRulePattern)
+                                .textFieldStyle(.roundedBorder)
+
+                            TextField("App (optional, z. B. iTerm2)", text: $newRuleAppName)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 170)
+
+                            HStack(spacing: 2) {
+                                Button("-") { newRuleScore = max(10, newRuleScore - 5) }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                Text("\(newRuleScore)")
+                                    .font(.caption.monospaced().bold())
+                                    .frame(width: 28)
+                                Button("+") { newRuleScore = min(100, newRuleScore + 5) }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
+
+                            Button(action: addWindowRule) {
+                                Label("Regel speichern", systemImage: "plus")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
+                            .disabled(newRulePattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                        if !config.windowRules.isEmpty {
+                            VStack(spacing: 4) {
+                                ForEach(config.windowRules) { rule in
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "text.magnifyingglass")
+                                            .foregroundColor(.cyan)
+
+                                        Text("\"\(rule.pattern)\"")
+                                            .font(.caption.bold())
+
+                                        if let app = rule.appName, !app.isEmpty {
+                                            Text("in \(app)")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+
+                                        Spacer()
+
+                                        Text("Score: \(rule.score)")
+                                            .font(.caption.monospaced().bold())
+                                            .foregroundColor(rule.score > 65 ? .cyan : (rule.score < 36 ? .orange : .blue))
+
+                                        Button(action: { removeWindowRule(id: rule.id) }) {
+                                            Image(systemName: "trash")
+                                                .font(.caption)
+                                                .foregroundColor(.red)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Regel löschen")
+                                    }
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(Color.secondary.opacity(0.05))
+                                    .cornerRadius(6)
+                                }
+                            }
                         }
                     }
-                    .padding(.vertical, 2)
-                    .padding(.trailing, 4)
+                    .padding(6)
                 }
-                .frame(maxHeight: 150)
-            }
 
-            GroupBox(label: Label("Smart Pairing Rules", systemImage: "link")) {
-                Toggle("Auto Side-by-Side (50/50) when Browser is paired with Notes", isOn: $config.sideBySideForNotesAndBrowser)
-                    .fontWeight(.medium)
+                // Section 3: Feineinstellung einzelner Apps
+                GroupBox(label: Label("Programm-Feineinstellungen", systemImage: "slider.horizontal.3")) {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        VStack(spacing: 4) {
+                            ForEach(config.appWeights) { appWeight in
+                                individualAppWeightRow(item: appWeight)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                        .padding(.trailing, 4)
+                    }
+                    .frame(maxHeight: 140)
+                }
+
+                // Section 4: Adaptives Layout-Gedächtnis (SpaceMemory)
+                GroupBox(label: Label("Adaptives Layout-Gedächtnis (SpaceMemory)", systemImage: "brain.head.profile")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("SpaceMemory ist ein heuristisches Online-Lernverfahren (gleitender exponentieller Durchschnitt): Es merkt sich Ihre bevorzugten Fensterverhältnisse pro Bildschirmauflösung und App-Kombination automatisch.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Toggle("Automatisches Anpassen an gelernte Verhältnisse aktiv", isOn: $config.enableSpaceLearning)
+                            .toggleStyle(.switch)
+                            .onChange(of: config.enableSpaceLearning) { _ in
+                                config.save()
+                            }
+
+                        HStack {
+                            Text("Gelernte Profile (\(SpaceMemory.shared.profiles.count)):")
+                                .font(.subheadline.bold())
+                            Spacer()
+
+                            Button(action: {
+                                if let msg = SpaceObserver.shared.learnCurrentLayoutNow() {
+                                    showStatus(msg)
+                                } else {
+                                    showStatus("Konnte Layout nicht erfassen.")
+                                }
+                            }) {
+                                Label("Aktuellen Space einlernen", systemImage: "camera.badge.ellipsis")
+                            }
+                            .buttonStyle(.bordered)
+
+                            if !SpaceMemory.shared.profiles.isEmpty {
+                                Button(action: {
+                                    SpaceMemory.shared.clear()
+                                    showStatus("SpaceMemory-Profile gelöscht.")
+                                }) {
+                                    Label("Speicher leeren", systemImage: "trash")
+                                }
+                                .buttonStyle(.bordered)
+                                .foregroundColor(.red)
+                            }
+                        }
+
+                        if SpaceMemory.shared.profiles.isEmpty {
+                            Text("Noch keine Profile gelernt. Nutzen Sie 'Aktuellen Space einlernen' oder ordnen Sie Fenster mit Hyper+Space an.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.vertical, 6)
+                        } else {
+                            VStack(spacing: 6) {
+                                ForEach(SpaceMemory.shared.profiles) { prof in
+                                    spaceProfileRow(prof)
+                                }
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
             }
+            .padding(.trailing, 4)
         }
+    }
+
+    private func addWindowRule() {
+        let pattern = newRulePattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pattern.isEmpty else { return }
+        let app = newRuleAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rule = WindowRuleConfig(
+            pattern: pattern,
+            appName: app.isEmpty ? nil : app,
+            score: newRuleScore
+        )
+        config.windowRules.append(rule)
+        config.save()
+        newRulePattern = ""
+        newRuleAppName = ""
+        showStatus("Regel für Fenster mit '\(pattern)' gespeichert.")
+    }
+
+    private func removeWindowRule(id: String) {
+        config.windowRules.removeAll { $0.id == id }
+        config.save()
+        showStatus("Fensterregel entfernt.")
     }
 
     private func weightCategoryRow(title: String, appsList: [String], desc: String, icon: String) -> some View {
@@ -1514,103 +1849,29 @@ struct SettingsView: View {
         guard let idxA = currentWindows.firstIndex(where: { $0.id == idA }),
               let idxB = currentWindows.firstIndex(where: { $0.id == idB }) else { return }
 
-        withAnimation(.easeInOut(duration: 0.25)) {
+        let nameA = currentWindows[idxA].appName
+        let nameB = currentWindows[idxB].appName
+
+        // 1. Physically swap their frames on the screen
+        WindowManager.shared.swapWindowPositions(idA: idA, idB: idB)
+
+        // 2. Animate and update frames locally in the canvas
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            let frameA = currentWindows[idxA].currentFrame
+            let frameB = currentWindows[idxB].currentFrame
+            currentWindows[idxA].currentFrame = frameB
+            currentWindows[idxB].currentFrame = frameA
             currentWindows.swapAt(idxA, idxB)
         }
 
-        if idxA == 0 {
-            WindowManager.shared.setMasterWindow(id: idB)
-            showStatus("Swapped slots. '\(currentWindows[0].appName)' is now Master.")
-        } else if idxB == 0 {
-            WindowManager.shared.setMasterWindow(id: idA)
-            showStatus("Swapped slots. '\(currentWindows[0].appName)' is now Master.")
-        } else {
-            showStatus("Swapped '\(currentWindows[idxA].appName)' and '\(currentWindows[idxB].appName)'.")
-            DispatchQueue.global(qos: .userInitiated).async {
-                WindowManager.shared.optimize(verbose: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    self.refreshData()
-                }
-            }
+        showStatus("Swapped '\(nameA)' and '\(nameB)' on screen.")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            self.refreshData()
         }
     }
 
-    // MARK: - Tab 3: SpaceMemory Dashboard (Learned Split Ratios & Profiles)
-    var spaceMemoryTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            GroupBox(label: Label("SpaceMemory Machine-Assisted Tiling", systemImage: "brain.head.profile")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("SpaceMemory continuously learns your ergonomic preferences per display resolution and application cluster. When apps are launched or arranged, it automatically reapplies your learned split ratio.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
 
-                    Toggle("Enable Space Learning & Auto-Adaptation", isOn: $config.enableSpaceLearning)
-                        .toggleStyle(.switch)
-                        .onChange(of: config.enableSpaceLearning) { _ in
-                            config.save()
-                        }
-                }
-                .padding(8)
-            }
-
-            HStack {
-                Text("Learned Resolution & App Profiles (\(SpaceMemory.shared.profiles.count)):")
-                    .font(.subheadline.bold())
-                Spacer()
-
-                Button(action: {
-                    if let msg = SpaceObserver.shared.learnCurrentLayoutNow() {
-                        showStatus(msg)
-                    } else {
-                        showStatus("Could not sample current layout.")
-                    }
-                }) {
-                    Label("Learn Current Space", systemImage: "camera.badge.ellipsis")
-                }
-                .buttonStyle(.bordered)
-
-                if !SpaceMemory.shared.profiles.isEmpty {
-                    Button(action: {
-                        SpaceMemory.shared.clear()
-                        showStatus("Cleared SpaceMemory profiles.")
-                    }) {
-                        Label("Clear All Memory", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .foregroundColor(.red)
-                }
-            }
-
-            if SpaceMemory.shared.profiles.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 28))
-                        .foregroundColor(.secondary)
-                    Text("No profiles learned yet.")
-                        .font(.subheadline.bold())
-                    Text("SpaceTile automatically saves layout ratios when you arrange windows with Hyper+Space or click 'Learn Current Space'.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 400)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 30)
-                .background(Color.secondary.opacity(0.04))
-                .cornerRadius(8)
-            } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(spacing: 8) {
-                        ForEach(SpaceMemory.shared.profiles) { prof in
-                            spaceProfileRow(prof)
-                        }
-                    }
-                    .padding(.trailing, 4)
-                }
-                .frame(maxHeight: 280)
-            }
-        }
-    }
 
     private func spaceProfileRow(_ prof: SpaceProfile) -> some View {
         HStack(spacing: 12) {

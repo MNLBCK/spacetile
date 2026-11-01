@@ -17,6 +17,34 @@ struct ShortcutConfig: Codable, Equatable {
         }.joined(separator: " + ")
         return "\(mods) + \(key.uppercased())"
     }
+
+    var cleanDisplayString: String {
+        let mods = modifiers.map { m -> String in
+            switch m.lowercased() {
+            case "hyper", "super": return "Hyper"
+            case "cmd", "command": return "⌘ Cmd"
+            case "opt", "option", "alt": return "⌥ Opt"
+            case "ctrl", "control": return "⌃ Ctrl"
+            case "shift": return "⇧ Shift"
+            default: return m.capitalized
+            }
+        }.joined(separator: " + ")
+        return "\(mods) + \(key.uppercased())"
+    }
+}
+
+struct WindowRuleConfig: Codable, Identifiable {
+    var id: String
+    var pattern: String             // Title substring / pattern (e.g. "openclaw", "nvim", "dev")
+    var appName: String?            // Optional app name constraint (e.g. "iTerm2", or nil for any app)
+    var score: Int                  // 1 to 100 weight
+
+    init(id: String = UUID().uuidString, pattern: String, appName: String? = nil, score: Int = 50) {
+        self.id = id
+        self.pattern = pattern
+        self.appName = appName
+        self.score = score
+    }
 }
 
 struct AppWeightConfig: Codable, Identifiable {
@@ -29,7 +57,7 @@ struct AppWeightConfig: Codable, Identifiable {
 }
 
 struct Config: Codable {
-    static let version = "1.5.4"
+    static let version = "1.5.5"
 
     // Shortcuts
     var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)
@@ -51,6 +79,7 @@ struct Config: Codable {
 
     // Grid & Weights
     var appWeights: [AppWeightConfig]
+    var windowRules: [WindowRuleConfig]
     var sideBySideForNotesAndBrowser: Bool
     var enableSpaceLearning: Bool
 
@@ -70,6 +99,7 @@ struct Config: Codable {
         animationSteps: Int = 10,
         freezeContentDuringResize: Bool = true,
         appWeights: [AppWeightConfig]? = nil,
+        windowRules: [WindowRuleConfig]? = nil,
         sideBySideForNotesAndBrowser: Bool = true,
         enableSpaceLearning: Bool = true,
         ignoredApps: [String]? = nil
@@ -86,6 +116,7 @@ struct Config: Codable {
         self.animationDuration = animationDuration
         self.animationSteps = animationSteps
         self.freezeContentDuringResize = freezeContentDuringResize
+        self.windowRules = windowRules ?? []
         self.sideBySideForNotesAndBrowser = sideBySideForNotesAndBrowser
         self.enableSpaceLearning = enableSpaceLearning
         self.appWeights = appWeights ?? [
@@ -122,7 +153,7 @@ struct Config: Codable {
         case shortcut, masterShortcut, lockShortcut, floatShortcut, guiShortcut
         case gap, margin, singleWindowMode
         case animationMode, animationDuration, animationSteps, freezeContentDuringResize
-        case appWeights, sideBySideForNotesAndBrowser, enableSpaceLearning, ignoredApps
+        case appWeights, windowRules, sideBySideForNotesAndBrowser, enableSpaceLearning, ignoredApps
     }
 
     init(from decoder: Decoder) throws {
@@ -145,6 +176,7 @@ struct Config: Codable {
         freezeContentDuringResize = try container.decodeIfPresent(Bool.self, forKey: .freezeContentDuringResize) ?? true
 
         appWeights = try container.decodeIfPresent([AppWeightConfig].self, forKey: .appWeights) ?? def.appWeights
+        windowRules = try container.decodeIfPresent([WindowRuleConfig].self, forKey: .windowRules) ?? []
         sideBySideForNotesAndBrowser = try container.decodeIfPresent(Bool.self, forKey: .sideBySideForNotesAndBrowser) ?? def.sideBySideForNotesAndBrowser
         enableSpaceLearning = try container.decodeIfPresent(Bool.self, forKey: .enableSpaceLearning) ?? def.enableSpaceLearning
         ignoredApps = try container.decodeIfPresent([String].self, forKey: .ignoredApps) ?? def.ignoredApps
