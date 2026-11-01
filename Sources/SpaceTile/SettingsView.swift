@@ -385,45 +385,47 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header Bar
-            HStack(spacing: 14) {
-                AnimatedTileVisualizer(width: 58, height: 32.6)
+            HStack(spacing: 16) {
+                // Larger Animated 16:9 Display Icon
+                AnimatedTileVisualizer(width: 80, height: 45)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text("SpaceTile")
-                            .font(.title2.bold())
+                // Prominently Larger Title
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("SpaceTile")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
 
-                        // Dynamic Accessibility Status
-                        if isAccessibilityGranted {
-                            Label("Accessibility: Granted", systemImage: "checkmark.circle.fill")
-                                .font(.caption2.bold())
-                                .foregroundColor(.green)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.green.opacity(0.15))
-                                .cornerRadius(4)
-                        } else {
-                            Label("Accessibility: Required", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption2.bold())
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.red)
-                                .cornerRadius(4)
-                        }
-
-                        // Dynamic Daemon Status
-                        Label(daemonStatus.isRunning ? "Daemon Active" : "Daemon Stopped", systemImage: daemonStatus.isRunning ? "bolt.fill" : "pause.fill")
-                            .font(.caption2.bold())
-                            .foregroundColor(daemonStatus.isRunning ? .cyan : .orange)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background((daemonStatus.isRunning ? Color.cyan : Color.orange).opacity(0.15))
-                            .cornerRadius(4)
-                    }
                     Text("Intelligent On-Demand Window Tiling for macOS")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
 
                 Spacer()
+
+                // Status Pills Shifted to the Right
+                HStack(spacing: 8) {
+                    if isAccessibilityGranted {
+                        Label("Accessibility: Granted", systemImage: "checkmark.circle.fill")
+                            .font(.caption.bold())
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(Color.green.opacity(0.15))
+                            .clipShape(Capsule())
+                    } else {
+                        Label("Accessibility: Required", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.bold())
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(Color.red)
+                            .clipShape(Capsule())
+                    }
+
+                    Label(daemonStatus.isRunning ? "Daemon Active" : "Daemon Stopped", systemImage: daemonStatus.isRunning ? "bolt.fill" : "pause.fill")
+                        .font(.caption.bold())
+                        .foregroundColor(daemonStatus.isRunning ? .cyan : .orange)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background((daemonStatus.isRunning ? Color.cyan : Color.orange).opacity(0.15))
+                        .clipShape(Capsule())
+                }
 
                 // Prominent Rearrange Now Button (Taller, distinct primary action)
                 Button(action: triggerOptimizeNow) {
