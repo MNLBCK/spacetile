@@ -49,7 +49,8 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             win.title = "SpaceTile Settings"
             win.contentViewController = hostingController
             win.isReleasedWhenClosed = false
-            win.level = .normal // Standard level: system permission alerts appear above it, never hidden behind
+            win.level = .floating // Always floats on top of other windows
+            win.hidesOnDeactivate = false
             win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary] // Stays open and in place when switching spaces
             win.delegate = self
 

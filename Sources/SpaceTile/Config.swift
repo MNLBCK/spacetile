@@ -57,7 +57,7 @@ struct AppWeightConfig: Codable, Identifiable {
 }
 
 struct Config: Codable {
-    static let version = "1.5.5"
+    static let version = "1.5.6"
 
     // Shortcuts
     var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)

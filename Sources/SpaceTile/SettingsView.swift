@@ -541,16 +541,16 @@ struct SettingsView: View {
                         .clipShape(Capsule())
                 }
 
-                // Prominent Rearrange Now Button (Taller, distinct primary action)
+                // Prominently Taller Rearrange Now Button (Primary Action)
                 Button(action: triggerOptimizeNow) {
-                    HStack(spacing: 7) {
+                    HStack(spacing: 8) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 15, weight: .bold))
                         Text("Rearrange Now")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 14, weight: .bold))
                     }
-                    .frame(height: 34)
-                    .padding(.horizontal, 16)
+                    .frame(height: 44)
+                    .padding(.horizontal, 18)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -924,14 +924,17 @@ struct SettingsView: View {
                     Spacer().frame(width: 65)
                 }
 
-                if index == 0 && WindowManager.shared.masterWindowID != nil {
-                    Button("Auto") {
-                        clearMaster()
+                if index == 0 || win.id == WindowManager.shared.masterWindowID {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.green)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .frame(width: 72)
-                } else if index != 0 && !win.isLocked && !win.isFloating {
+                    .frame(width: 72, height: 22)
+                    .background(Color.green.opacity(0.12))
+                    .cornerRadius(5)
+                    .help("Aktives Master-Fenster")
+                } else if !win.isLocked && !win.isFloating {
                     Button("Set Master") {
                         promoteToMaster(id: win.id, appName: win.appName)
                     }
@@ -1085,33 +1088,37 @@ struct SettingsView: View {
 
                     Divider()
 
-                    HStack {
+                    HStack(spacing: 16) {
                         Text("Einzel-Fenster Modus:")
                             .fontWeight(.medium)
+                            .frame(width: 160, alignment: .leading)
+
                         Picker("", selection: $config.singleWindowMode) {
                             Text("Zentriert (Ergonomisch)").tag("centered")
                             Text("Maximiert (Volle Arbeitsfläche)").tag("maximized")
                         }
+                        .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(width: 320)
+                        .frame(maxWidth: 380)
                     }
                 }
                 .padding(8)
             }
 
             GroupBox(label: Label("Fenster-Animation & Glätte", systemImage: "speedometer")) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 16) {
                         Text("Bewegungsmodus:")
                             .font(.subheadline.bold())
+                            .frame(width: 160, alignment: .leading)
 
                         Picker("", selection: $config.animationMode) {
-                            Text("Direkt (Sofortiges Einrasten, Zero-Lag)").tag("instant")
-                            Text("Flüssige Gleit-Animation (Smooth Glide)").tag("smooth")
+                            Text("Direkt (Sofortiges Einrasten)").tag("instant")
+                            Text("Flüssige Gleit-Animation").tag("smooth")
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(width: 420)
+                        .frame(maxWidth: 380)
                     }
 
                     if config.animationMode == "smooth" {
@@ -1137,11 +1144,8 @@ struct SettingsView: View {
                                 }
                             }
 
-                            Toggle("Fensterinhalte während Animation einfrieren (SkyLight Atomic Sync)", isOn: $config.freezeContentDuringResize)
-                                .font(.caption.bold())
-                            Text("Nutzt macOS SkyLight CGSDisableUpdate/CGSReenableUpdate, damit schwere Apps (Chrome, VS Code, iTerm2) nicht bei jedem Zwischenschritt neu berechnen.")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                            Toggle("Fensterinhalte während Animation einfrieren", isOn: $config.freezeContentDuringResize)
+                                .font(.subheadline.bold())
                         }
                     }
                 }
