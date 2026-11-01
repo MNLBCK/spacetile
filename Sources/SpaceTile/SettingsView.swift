@@ -155,6 +155,7 @@ struct AnimatedTileVisualizer: View {
 struct LiveGridView: View {
     let windows: [ManagedWindow]
     let onSetMasterAndRearrange: (CGWindowID, String) -> Void
+    let onClearMaster: () -> Void
     let onToggleLock: (CGWindowID) -> Void
 
     var body: some View {
@@ -174,7 +175,7 @@ struct LiveGridView: View {
                     Image(systemName: "hand.tap.fill")
                         .font(.caption2)
                         .foregroundColor(.cyan)
-                    Text("Double-click any window to set as Master & rearrange")
+                    Text("Double-click or Right-click any window to set as Master")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -331,11 +332,25 @@ struct LiveGridView: View {
         .background(bgColor)
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: isMaster ? 1.5 : 1))
         .cornerRadius(4)
-        .position(x: boxX + boxW / 2.0, y: boxY + boxH / 2.0)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             onSetMasterAndRearrange(win.id, win.appName)
         }
+        .contextMenu {
+            if !isMaster && !win.isLocked {
+                Button("Set as Master Window") {
+                    onSetMasterAndRearrange(win.id, win.appName)
+                }
+            } else if isMaster {
+                Button("Reset to Automatic Scoring") {
+                    onClearMaster()
+                }
+            }
+            Button(win.isLocked ? "Unlock Position" : "Lock Position") {
+                onToggleLock(win.id)
+            }
+        }
+        .offset(x: boxX, y: boxY)
     }
 }
 
@@ -578,6 +593,16 @@ struct SettingsView: View {
                 refreshData()
             }
         }
+        .onReceive(DistributedNotificationCenter.default().publisher(for: NSNotification.Name("com.guppi.spacetile.masterChanged"))) { _ in
+            DispatchQueue.main.async {
+                refreshData()
+            }
+        }
+        .onReceive(DistributedNotificationCenter.default().publisher(for: NSNotification.Name("com.guppi.spacetile.windowsRearranged"))) { _ in
+            DispatchQueue.main.async {
+                refreshData()
+            }
+        }
         .onDisappear {
             stopRecording()
         }
@@ -589,9 +614,10 @@ struct SettingsView: View {
             LiveGridView(
                 windows: currentWindows,
                 onSetMasterAndRearrange: { winID, appName in
-                    WindowManager.shared.optimize(verbose: true, forcedMasterID: winID)
-                    refreshData()
-                    showStatus("Promoted '\(appName)' to Master & rearranged.")
+                    promoteToMaster(id: winID, appName: appName)
+                },
+                onClearMaster: {
+                    clearMaster()
                 },
                 onToggleLock: { winID in
                     let isLocked = WindowManager.shared.lockedWindowIDs.contains(winID)
@@ -670,11 +696,15 @@ struct SettingsView: View {
             }
             .buttonStyle(.bordered)
 
-            if index != 0 && !win.isLocked {
+            if index == 0 && WindowManager.shared.masterWindowID != nil {
+                Button("Auto Master") {
+                    clearMaster()
+                }
+                .buttonStyle(.bordered)
+                .help("Revert master window choice to automatic scoring")
+            } else if index != 0 && !win.isLocked {
                 Button("Set as Master") {
-                    WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id)
-                    refreshData()
-                    showStatus("Set \(win.appName) as Master.")
+                    promoteToMaster(id: win.id, appName: win.appName)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.cyan)
@@ -685,9 +715,9 @@ struct SettingsView: View {
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            WindowManager.shared.optimize(verbose: true, forcedMasterID: win.id)
-            refreshData()
-            showStatus("Promoted '\(win.appName)' to Master & rearranged.")
+            if !win.isLocked && index != 0 {
+                promoteToMaster(id: win.id, appName: win.appName)
+            }
         }
     }
 
@@ -1333,9 +1363,40 @@ struct SettingsView: View {
     }
 
     func triggerOptimizeNow() {
-        WindowManager.shared.optimize(verbose: true)
-        refreshData()
-        showStatus("Windows rearranged.")
+        showStatus("Rearranging windows...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            WindowManager.shared.optimize(verbose: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                self.refreshData()
+                self.showStatus("Windows rearranged.")
+            }
+        }
+    }
+
+    func promoteToMaster(id: CGWindowID, appName: String) {
+        if let idx = currentWindows.firstIndex(where: { $0.id == id }) {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                let chosen = currentWindows.remove(at: idx)
+                currentWindows.insert(chosen, at: 0)
+            }
+        }
+        showStatus("Set '\(appName)' as Master & rearranging...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            WindowManager.shared.setMasterWindow(id: id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                self.refreshData()
+            }
+        }
+    }
+
+    func clearMaster() {
+        showStatus("Reset Master to automatic scoring & rearranging...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            WindowManager.shared.clearMasterWindow()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                self.refreshData()
+            }
+        }
     }
 
     func showStatus(_ msg: String) {

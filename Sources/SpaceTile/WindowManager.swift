@@ -24,6 +24,7 @@ class WindowManager {
     static let shared = WindowManager()
 
     private(set) var lockedWindowIDs: Set<CGWindowID> = []
+    private(set) var masterWindowID: CGWindowID?
     private var lastRunTime: Date?
 
     static var lockedStoreURL: URL {
@@ -31,8 +32,54 @@ class WindowManager {
         return home.appendingPathComponent(".config/spacetile/locked_windows.json")
     }
 
+    static var masterStoreURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".config/spacetile/master_window.json")
+    }
+
     init() {
         reloadLockedWindowIDs()
+        reloadMasterWindowID()
+    }
+
+    func reloadMasterWindowID() {
+        guard let data = try? Data(contentsOf: WindowManager.masterStoreURL),
+              let id = try? JSONDecoder().decode(UInt32.self, from: data) else {
+            return
+        }
+        self.masterWindowID = CGWindowID(id)
+    }
+
+    func persistMasterWindowID() {
+        let url = WindowManager.masterStoreURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let id = masterWindowID {
+            if let data = try? JSONEncoder().encode(UInt32(id)) {
+                try? data.write(to: url, options: .atomic)
+            }
+        } else {
+            try? FileManager.default.removeItem(at: url)
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.masterChanged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+    }
+
+    func setMasterWindow(id: CGWindowID) {
+        reloadMasterWindowID()
+        self.masterWindowID = id
+        persistMasterWindowID()
+        _ = optimize(verbose: true, forcedMasterID: id)
+    }
+
+    func clearMasterWindow() {
+        reloadMasterWindowID()
+        self.masterWindowID = nil
+        persistMasterWindowID()
+        _ = optimize(verbose: true)
     }
 
     func reloadLockedWindowIDs() {
@@ -132,6 +179,9 @@ class WindowManager {
 
     func setFocusedAsMaster() -> Bool {
         guard let front = NSWorkspace.shared.frontmostApplication else { return false }
+        if front.processIdentifier == ProcessInfo.processInfo.processIdentifier || front.localizedName == "SpaceTile" {
+            return false
+        }
         let appRef = AXUIElementCreateApplication(front.processIdentifier)
         var winRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
@@ -140,7 +190,8 @@ class WindowManager {
         var winID: CGWindowID = 0
         guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return false }
 
-        return optimize(verbose: true, forcedMasterID: winID)
+        setMasterWindow(id: winID)
+        return true
     }
 
     @discardableResult
@@ -151,6 +202,7 @@ class WindowManager {
         }
 
         reloadLockedWindowIDs()
+        reloadMasterWindowID()
         let config = Config.load()
 
         guard let targetScreen = findTargetScreen() else {
@@ -178,10 +230,15 @@ class WindowManager {
             return true
         }
 
-        // Handle forced master
-        if let fid = forcedMasterID, let idx = windows.firstIndex(where: { $0.id == fid }) {
+        // Handle forced master or active master
+        let effectiveMasterID = forcedMasterID ?? masterWindowID
+        if let fid = effectiveMasterID, let idx = windows.firstIndex(where: { $0.id == fid }) {
             let chosen = windows.remove(at: idx)
             windows.insert(chosen, at: 0)
+            if masterWindowID != fid {
+                masterWindowID = fid
+                persistMasterWindowID()
+            }
         }
 
         // Apply learned ratio from SpaceMemory if not forced
@@ -240,6 +297,13 @@ class WindowManager {
                              tag, win.appName, win.score, Int(f.width), Int(f.height), Int(f.origin.x), Int(f.origin.y)))
             }
         }
+
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
 
         return true
     }
@@ -805,6 +869,7 @@ class WindowManager {
 
     func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>, config: Config) -> [ManagedWindow] {
         reloadLockedWindowIDs()
+        reloadMasterWindowID()
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let cgWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
@@ -817,6 +882,10 @@ class WindowManager {
         if !deadIDs.isEmpty {
             lockedWindowIDs.subtract(deadIDs)
             persistLockedWindowIDs()
+        }
+        if let mid = masterWindowID, !allIDs.contains(mid) {
+            masterWindowID = nil
+            persistMasterWindowID()
         }
 
         var onScreenMap: [CGWindowID: (order: Int, owner: String, title: String, bounds: CGRect)] = [:]
@@ -938,6 +1007,10 @@ class WindowManager {
         }
 
         managed.sort { a, b in
+            if let mid = masterWindowID {
+                if a.id == mid && b.id != mid { return true }
+                if b.id == mid && a.id != mid { return false }
+            }
             if abs(a.score - b.score) > 10 {
                 return a.score > b.score
             }

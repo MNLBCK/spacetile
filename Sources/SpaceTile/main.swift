@@ -37,6 +37,9 @@ case "optimize", "run":
 case "master":
     _ = WindowManager.shared.setFocusedAsMaster()
 
+case "clear-master", "reset-master":
+    WindowManager.shared.clearMasterWindow()
+
 case "lock":
     _ = WindowManager.shared.toggleLockForFocusedWindow()
 
