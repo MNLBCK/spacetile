@@ -7,22 +7,10 @@ cask "spacetile" do
   desc "Intelligent on-demand window tiling and optimization for macOS"
   homepage "https://github.com/MNLBCK/spacetile"
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
 
   app "SpaceTile.app"
   binary "#{appdir}/SpaceTile.app/Contents/MacOS/spacetile", target: "spacetile"
-
-  postflight do
-    system_command "#{appdir}/SpaceTile.app/Contents/MacOS/spacetile",
-                   args: ["install"],
-                   sudo: false
-  end
-
-  uninstall_preflight do
-    system_command "#{appdir}/SpaceTile.app/Contents/MacOS/spacetile",
-                   args: ["uninstall"],
-                   sudo: false
-  end
 
   zap trash: [
     "~/.config/spacetile",
