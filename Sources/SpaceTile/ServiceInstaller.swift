@@ -5,8 +5,16 @@ struct ServiceInstaller {
     static let label = "com.guppi.spacetile"
 
     static var appURL: URL {
+        if Bundle.main.bundleURL.path.hasSuffix("SpaceTile.app") {
+            return Bundle.main.bundleURL
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent("Applications/SpaceTile.app")
+        let userApp = home.appendingPathComponent("Applications/SpaceTile.app")
+        let sysApp = URL(fileURLWithPath: "/Applications/SpaceTile.app")
+        if FileManager.default.fileExists(atPath: sysApp.path) && !FileManager.default.fileExists(atPath: userApp.path) {
+            return sysApp
+        }
+        return userApp
     }
 
     static var binaryDestination: URL {

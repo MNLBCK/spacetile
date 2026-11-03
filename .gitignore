@@ -18,3 +18,5 @@ Icon\r
 # SpaceTile Local Logs & Configs
 *.log
 .build-artifacts/
+build/
+dist/

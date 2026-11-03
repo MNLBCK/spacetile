@@ -461,6 +461,8 @@ struct SettingsView: View {
     @State private var currentMasterID: CGWindowID? = WindowManager.shared.masterWindowID
     @State private var selectedTab: Int
     @State private var recordingField: String? = nil
+    @State private var showFeedbackSheet: Bool = false
+    @State private var feedbackSheetType: FeedbackType = .feature
     @State private var isAccessibilityGranted: Bool = WindowManager.canControlWindows()
     @State private var daemonStatus: (isRunning: Bool, pid: Int?) = ServiceInstaller.statusInfo()
     @State private var recentLogs: [String] = ServiceInstaller.getRecentLogs()
@@ -546,6 +548,24 @@ struct SettingsView: View {
                         .background((daemonStatus.isRunning ? Color.cyan : Color.orange).opacity(0.15))
                         .clipShape(Capsule())
                 }
+
+                // Feedback & Bug Reporter Button
+                Button(action: {
+                    feedbackSheetType = .feature
+                    showFeedbackSheet = true
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bubble.left.and.exclamationmark.bubble.right.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Feedback & Bugs")
+                            .font(.caption.bold())
+                    }
+                    .frame(height: 38)
+                    .padding(.horizontal, 10)
+                }
+                .buttonStyle(.bordered)
+                .tint(.cyan)
+                .help("Neue Funktion vorschlagen oder Fehler mit Logs auf GitHub melden")
 
                 // Prominently Taller Rearrange Now Button (60px Height)
                 Button(action: triggerOptimizeNow) {
@@ -731,6 +751,9 @@ struct SettingsView: View {
         }
         .onDisappear {
             stopRecording()
+        }
+        .sheet(isPresented: $showFeedbackSheet) {
+            FeedbackSheetView(isPresented: $showFeedbackSheet, selectedType: feedbackSheetType)
         }
     }
 
@@ -1737,13 +1760,59 @@ struct SettingsView: View {
             }
             .frame(maxWidth: 500)
 
+            // Feedback & Community Reporting Card
+            GroupBox(label: Label("Feedback, Ideen & Fehlerberichte", systemImage: "bubble.left.and.exclamationmark.bubble.right.fill")) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Hast du eine Idee für eine neue Funktion oder ist ein Problem aufgetreten? Reiche Vorschläge und Fehlerberichte direkt auf GitHub ein – optional mit Systemdaten und Diagnose-Logs.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            feedbackSheetType = .feature
+                            showFeedbackSheet = true
+                        }) {
+                            Label("Funktion vorschlagen", systemImage: "lightbulb.fill")
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.cyan)
+
+                        Button(action: {
+                            feedbackSheetType = .bug
+                            showFeedbackSheet = true
+                        }) {
+                            Label("Bug melden (mit Logs)", systemImage: "ladybug.fill")
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.orange)
+
+                        Spacer()
+
+                        Button(action: {
+                            if let url = URL(string: Config.issuesURL) {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }) {
+                            Label("GitHub Issues", systemImage: "arrow.up.right.square")
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.secondary)
+                    }
+                }
+                .padding(6)
+            }
+            .frame(maxWidth: 500)
+
             VStack(spacing: 12) {
-                Text("SpaceTile is free and open source. Enjoying it?")
+                Text("SpaceTile ist freie Open-Source-Software.")
                     .font(.subheadline).foregroundColor(.secondary)
 
                 HStack(spacing: 16) {
                     Button(action: {
-                        if let url = URL(string: "https://github.com/guppi/spacetile") {
+                        if let url = URL(string: Config.repoURL) {
                             NSWorkspace.shared.open(url)
                         }
                     }) {
@@ -1766,7 +1835,7 @@ struct SettingsView: View {
                     .tint(Color(red: 0.85, green: 0.47, blue: 0.02)) // #d97706 warm amber
                 }
             }
-            .padding(.top, 6)
+            .padding(.top, 4)
 
             Spacer()
         }

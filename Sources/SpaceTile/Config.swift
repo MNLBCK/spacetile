@@ -58,6 +58,8 @@ struct AppWeightConfig: Codable, Identifiable {
 
 struct Config: Codable {
     static let version = "1.5.7"
+    static let repoURL = "https://github.com/MNLBCK/spacetile"
+    static let issuesURL = "https://github.com/MNLBCK/spacetile/issues/new"
 
     // Shortcuts
     var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)

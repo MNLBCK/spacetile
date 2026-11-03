@@ -18,6 +18,7 @@ func printHelp() {
       \u{001B}[32minstall\u{001B}[0m              Installiert SpaceTile als dauerhaften Hintergrund-Dienst (LaunchAgent)
       \u{001B}[32muninstall\u{001B}[0m            Entfernt den Hintergrund-Dienst
       \u{001B}[32mstatus\u{001B}[0m               Zeigt an, ob der Dienst im Hintergrund aktiv ist
+      \u{001B}[32mfeedback\u{001B}[0m, \u{001B}[32mbug\u{001B}[0m       Erstellt einen Vorschlag oder Fehlerbericht mit Logs auf GitHub
       \u{001B}[32mconfig\u{001B}[0m               Zeigt die aktuelle Konfiguration
       \u{001B}[32mhelp\u{001B}[0m                 Zeigt diese Hilfe an
 
@@ -77,6 +78,23 @@ case "uninstall":
 
 case "status":
     ServiceInstaller.status()
+
+case "feedback", "issue", "bug":
+    let isBug = (command == "bug")
+    let title = args.dropFirst().joined(separator: " ")
+    print("[\u{001B}[32mSpaceTile\u{001B}[0m] Erstelle GitHub \(isBug ? "Fehlerbericht" : "Vorschlag") mit Diagnose-Logs...")
+    let success = FeedbackReporter.openGitHubIssue(
+        type: isBug ? .bug : .feature,
+        title: title,
+        description: "",
+        includeSystemInfo: true,
+        includeLogs: isBug
+    )
+    if success {
+        print("[\u{001B}[32mOK\u{001B}[0m] GitHub Issue-Maske im Browser geöffnet und Diagnose-Bericht in die Zwischenablage kopiert!")
+    } else {
+        print("[\u{001B}[31mERROR\u{001B}[0m] Browser konnte nicht geöffnet werden.")
+    }
 
 case "config":
     if args.contains("--gui") {

@@ -1,0 +1,37 @@
+name: Release SpaceTile
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Package SpaceTile.app & Generate Cask
+        run: |
+          chmod +x ./scripts/package_release.sh
+          ./scripts/package_release.sh
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.sha256
+            Casks/spacetile.rb
+          generate_release_notes: true
+          draft: false
+          prerelease: false
