@@ -33,7 +33,7 @@ struct ShortcutConfig: Codable, Equatable {
     }
 }
 
-struct WindowRuleConfig: Codable, Identifiable {
+struct WindowRuleConfig: Codable, Identifiable, Equatable {
     var id: String
     var pattern: String             // Title substring / pattern (e.g. "openclaw", "nvim", "dev")
     var appName: String?            // Optional app name constraint (e.g. "iTerm2", or nil for any app)
@@ -47,7 +47,7 @@ struct WindowRuleConfig: Codable, Identifiable {
     }
 }
 
-struct AppWeightConfig: Codable, Identifiable {
+struct AppWeightConfig: Codable, Identifiable, Equatable {
     var id: String { appName }
     var appName: String
     var score: Int // 1 to 100 weight
@@ -56,8 +56,8 @@ struct AppWeightConfig: Codable, Identifiable {
     var maxWidth: Double?
 }
 
-struct Config: Codable {
-    static let version = "1.5.8"
+struct Config: Codable, Equatable {
+    static let version = "1.5.9"
     static let repoURL = "https://github.com/MNLBCK/spacetile"
     static let issuesURL = "https://github.com/MNLBCK/spacetile/issues/new"
 
@@ -68,9 +68,8 @@ struct Config: Codable {
     var floatShortcut: ShortcutConfig  // Float Window Always on Top (Hyper+F)
     var guiShortcut: ShortcutConfig    // Settings (Hyper+S)
 
-    // Menu Bar Actions
-    var menuBarDoubleClickAction: String // "rearrange", "settings", "master", "uniform"
-    var menuBarSingleClickAction: String // "menu", "settings", "rearrange"
+    // Menu Bar Quick Action (Left/Short Click: "rearrange", "actions", "settings", "master", "uniform", "menu")
+    var menuBarQuickAction: String
 
     // Layout & Spacing
     var gap: Double
@@ -98,8 +97,7 @@ struct Config: Codable {
         lockShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "l"),
         floatShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "f"),
         guiShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "s"),
-        menuBarDoubleClickAction: String = "rearrange",
-        menuBarSingleClickAction: String = "menu",
+        menuBarQuickAction: String = "rearrange",
         gap: Double = 10.0,
         margin: Double = 12.0,
         singleWindowMode: String = "centered",
@@ -119,8 +117,7 @@ struct Config: Codable {
         self.lockShortcut = lockShortcut
         self.floatShortcut = floatShortcut
         self.guiShortcut = guiShortcut
-        self.menuBarDoubleClickAction = menuBarDoubleClickAction
-        self.menuBarSingleClickAction = menuBarSingleClickAction
+        self.menuBarQuickAction = menuBarQuickAction
         self.gap = gap
         self.margin = margin
         self.singleWindowMode = singleWindowMode
@@ -164,7 +161,7 @@ struct Config: Codable {
 
     enum CodingKeys: String, CodingKey {
         case shortcut, masterShortcut, lockShortcut, floatShortcut, guiShortcut
-        case menuBarDoubleClickAction, menuBarSingleClickAction
+        case menuBarQuickAction, menuBarDoubleClickAction, menuBarSingleClickAction
         case gap, margin, singleWindowMode, enableDualFocus
         case animationMode, animationDuration, animationSteps, freezeContentDuringResize
         case appWeights, windowRules, sideBySideForNotesAndBrowser, enableSpaceLearning, ignoredApps
@@ -180,8 +177,18 @@ struct Config: Codable {
         floatShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .floatShortcut) ?? def.floatShortcut
         guiShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .guiShortcut) ?? def.guiShortcut
 
-        menuBarDoubleClickAction = try container.decodeIfPresent(String.self, forKey: .menuBarDoubleClickAction) ?? "rearrange"
-        menuBarSingleClickAction = try container.decodeIfPresent(String.self, forKey: .menuBarSingleClickAction) ?? "menu"
+        let quick = try container.decodeIfPresent(String.self, forKey: .menuBarQuickAction)
+        let single = try container.decodeIfPresent(String.self, forKey: .menuBarSingleClickAction)
+        let double = try container.decodeIfPresent(String.self, forKey: .menuBarDoubleClickAction)
+        if let q = quick {
+            menuBarQuickAction = q
+        } else if let s = single, s != "menu" {
+            menuBarQuickAction = s
+        } else if let d = double {
+            menuBarQuickAction = d
+        } else {
+            menuBarQuickAction = "rearrange"
+        }
 
         gap = try container.decodeIfPresent(Double.self, forKey: .gap) ?? def.gap
         margin = try container.decodeIfPresent(Double.self, forKey: .margin) ?? def.margin
@@ -198,6 +205,29 @@ struct Config: Codable {
         sideBySideForNotesAndBrowser = try container.decodeIfPresent(Bool.self, forKey: .sideBySideForNotesAndBrowser) ?? def.sideBySideForNotesAndBrowser
         enableSpaceLearning = try container.decodeIfPresent(Bool.self, forKey: .enableSpaceLearning) ?? def.enableSpaceLearning
         ignoredApps = try container.decodeIfPresent([String].self, forKey: .ignoredApps) ?? def.ignoredApps
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(shortcut, forKey: .shortcut)
+        try container.encode(masterShortcut, forKey: .masterShortcut)
+        try container.encode(lockShortcut, forKey: .lockShortcut)
+        try container.encode(floatShortcut, forKey: .floatShortcut)
+        try container.encode(guiShortcut, forKey: .guiShortcut)
+        try container.encode(menuBarQuickAction, forKey: .menuBarQuickAction)
+        try container.encode(gap, forKey: .gap)
+        try container.encode(margin, forKey: .margin)
+        try container.encode(singleWindowMode, forKey: .singleWindowMode)
+        try container.encode(enableDualFocus, forKey: .enableDualFocus)
+        try container.encode(animationMode, forKey: .animationMode)
+        try container.encode(animationDuration, forKey: .animationDuration)
+        try container.encode(animationSteps, forKey: .animationSteps)
+        try container.encode(freezeContentDuringResize, forKey: .freezeContentDuringResize)
+        try container.encode(appWeights, forKey: .appWeights)
+        try container.encode(windowRules, forKey: .windowRules)
+        try container.encode(sideBySideForNotesAndBrowser, forKey: .sideBySideForNotesAndBrowser)
+        try container.encode(enableSpaceLearning, forKey: .enableSpaceLearning)
+        try container.encode(ignoredApps, forKey: .ignoredApps)
     }
 
     static let `default` = Config()

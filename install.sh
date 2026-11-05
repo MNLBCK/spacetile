@@ -32,8 +32,9 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
 fi
 
 echo ""
+VERSION=$(grep 'static let version' Sources/SpaceTile/Config.swift | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
 echo "=================================================================="
-echo "🎉 SpaceTile v1.5.8 is successfully installed!"
+echo "🎉 SpaceTile v${VERSION:-1.5.9} is successfully installed!"
 echo "=================================================================="
 echo " • App Bundle:   ~/Applications/SpaceTile.app"
 echo " • CLI Tool:     ~/.local/bin/spacetile"

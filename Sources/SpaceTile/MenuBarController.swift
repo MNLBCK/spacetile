@@ -5,130 +5,255 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
     private var statusItem: NSStatusItem?
     private let menu = NSMenu()
+    private var statusTimer: Timer?
+    private var longPressTimer: Timer?
+    private var isLongPressTriggered = false
+    private var mouseDownTime: Date = Date.distantPast
 
     func setup() {
         guard statusItem == nil else { return }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = makeMenuBarIcon()
+            button.image = makeMenuBarIcon(active: ServiceInstaller.statusInfo().isRunning)
             button.imagePosition = .imageOnly
-            button.toolTip = "SpaceTile – Intelligent Window Tiling (Klick: Menü, Doppelklick: Anordnen/Settings)"
+            button.toolTip = "SpaceTile (Linksklick: Schnellaktion • Rechtsklick / Halten: Menü)"
             button.target = self
             button.action = #selector(statusItemClicked(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.sendAction(on: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp])
         }
         menu.delegate = self
         self.statusItem = item
         buildMenu()
+
+        // Periodically verify daemon status and reflect it via icon coloring
+        statusTimer?.invalidate()
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.refreshIcon()
+        }
     }
 
-    private func makeMenuBarIcon() -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let img = NSImage(size: size, flipped: false) { rect in
-            NSColor.clear.setFill()
-            rect.fill()
+    func refreshIcon() {
+        let isRunning = ServiceInstaller.statusInfo().isRunning
+        statusItem?.button?.image = makeMenuBarIcon(active: isRunning)
+    }
 
-            let strokeColor = NSColor.labelColor.withAlphaComponent(0.85)
-            let fillColor = NSColor.labelColor.withAlphaComponent(0.20)
+    // MARK: - 16:9 Display Icon Harmonized with Dock Icon Palette
+    private func makeMenuBarIcon(active: Bool) -> NSImage {
+        let size = NSSize(width: 22, height: 16)
+        let img = NSImage(size: size, flipped: false) { _ in
+            NSGraphicsContext.current?.imageInterpolation = .high
 
-            // Outer border
-            let outerPath = NSBezierPath(roundedRect: NSRect(x: 1, y: 1, width: 16, height: 16), xRadius: 3, yRadius: 3)
-            outerPath.lineWidth = 1.2
-            strokeColor.setStroke()
-            outerPath.stroke()
+            // 1. Aluminum Stand Base & Neck (matches Dock Icon)
+            let standColor = active
+                ? NSColor(red: 0.70, green: 0.73, blue: 0.78, alpha: 0.95)
+                : NSColor(white: 0.50, alpha: 0.35)
 
-            // Left (Master) tile
-            let masterRect = NSRect(x: 2.5, y: 2.5, width: 7.0, height: 13.0)
-            let masterPath = NSBezierPath(roundedRect: masterRect, xRadius: 1.5, yRadius: 1.5)
-            fillColor.setFill()
-            masterPath.fill()
-            masterPath.lineWidth = 0.8
-            strokeColor.setStroke()
-            masterPath.stroke()
+            let neckRect = NSRect(x: 9.75, y: 1.8, width: 2.5, height: 1.8)
+            standColor.setFill()
+            neckRect.fill()
 
-            // Top-right Stack tile
-            let trRect = NSRect(x: 10.5, y: 9.5, width: 5.0, height: 6.0)
-            let trPath = NSBezierPath(roundedRect: trRect, xRadius: 1.2, yRadius: 1.2)
-            fillColor.setFill()
-            trPath.fill()
-            trPath.lineWidth = 0.8
-            strokeColor.setStroke()
-            trPath.stroke()
+            let baseRect = NSRect(x: 7.0, y: 0.8, width: 8.0, height: 1.4)
+            let basePath = NSBezierPath(roundedRect: baseRect, xRadius: 0.7, yRadius: 0.7)
+            basePath.fill()
 
-            // Bottom-right Stack tile
-            let brRect = NSRect(x: 10.5, y: 2.5, width: 5.0, height: 6.0)
-            let brPath = NSBezierPath(roundedRect: brRect, xRadius: 1.2, yRadius: 1.2)
-            fillColor.setFill()
-            brPath.fill()
-            brPath.lineWidth = 0.8
-            strokeColor.setStroke()
-            brPath.stroke()
+            // 2. 16:9 Display Outer Bezel (Dark Space Titanium)
+            let bezelRect = NSRect(x: 1.0, y: 3.4, width: 20.0, height: 11.6)
+            let bezelPath = NSBezierPath(roundedRect: bezelRect, xRadius: 2.0, yRadius: 2.0)
+            if active {
+                NSColor(red: 0.13, green: 0.14, blue: 0.17, alpha: 1.0).setFill()
+                bezelPath.fill()
+                NSColor(white: 0.40, alpha: 0.4).setStroke()
+                bezelPath.lineWidth = 0.6
+                bezelPath.stroke()
+            } else {
+                NSColor(white: 0.18, alpha: 0.45).setFill()
+                bezelPath.fill()
+                NSColor(white: 0.35, alpha: 0.20).setStroke()
+                bezelPath.lineWidth = 0.6
+                bezelPath.stroke()
+            }
+
+            // 3. Inner Screen Glass
+            let screenRect = NSRect(x: 1.8, y: 4.2, width: 18.4, height: 10.0)
+            let screenPath = NSBezierPath(roundedRect: screenRect, xRadius: 1.2, yRadius: 1.2)
+            if active {
+                NSColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1.0).setFill()
+            } else {
+                NSColor(white: 0.10, alpha: 0.45).setFill()
+            }
+            screenPath.fill()
+
+            // 4. Windows Layout on Display Screen
+            // Left: Master Window Tile
+            let masterRect = NSRect(x: 2.6, y: 5.0, width: 8.8, height: 8.4)
+            let masterPath = NSBezierPath(roundedRect: masterRect, xRadius: 1.2, yRadius: 1.2)
+
+            if active {
+                // Electric Cyan to Azure Gradient (Sampled from Dock AppIcon.png)
+                let grad = NSGradient(
+                    starting: NSColor(red: 0.05, green: 0.48, blue: 0.94, alpha: 1.0),
+                    ending: NSColor(red: 0.10, green: 0.83, blue: 0.99, alpha: 1.0)
+                )
+                grad?.draw(in: masterPath, angle: 90)
+
+                NSColor(red: 0.51, green: 0.92, blue: 0.99, alpha: 0.85).setStroke()
+                masterPath.lineWidth = 0.6
+                masterPath.stroke()
+            } else {
+                // Grayed out when daemon is inactive
+                NSColor(white: 0.35, alpha: 0.35).setFill()
+                masterPath.fill()
+                NSColor(white: 0.50, alpha: 0.25).setStroke()
+                masterPath.lineWidth = 0.5
+                masterPath.stroke()
+            }
+
+            // Right: Auxiliary Stack Tiles (Frosted Slate)
+            let trRect = NSRect(x: 12.3, y: 9.4, width: 7.1, height: 4.0)
+            let trPath = NSBezierPath(roundedRect: trRect, xRadius: 0.8, yRadius: 0.8)
+
+            let brRect = NSRect(x: 12.3, y: 5.0, width: 7.1, height: 4.0)
+            let brPath = NSBezierPath(roundedRect: brRect, xRadius: 0.8, yRadius: 0.8)
+
+            if active {
+                NSColor(red: 0.22, green: 0.22, blue: 0.25, alpha: 1.0).setFill()
+                trPath.fill()
+                brPath.fill()
+
+                NSColor(white: 0.55, alpha: 0.25).setStroke()
+                trPath.lineWidth = 0.5
+                trPath.stroke()
+                brPath.lineWidth = 0.5
+                brPath.stroke()
+            } else {
+                NSColor(white: 0.25, alpha: 0.30).setFill()
+                trPath.fill()
+                brPath.fill()
+
+                NSColor(white: 0.40, alpha: 0.20).setStroke()
+                trPath.lineWidth = 0.5
+                trPath.stroke()
+                brPath.lineWidth = 0.5
+                brPath.stroke()
+            }
 
             return true
         }
-        img.isTemplate = true
+        img.isTemplate = false
         return img
     }
 
-    // MARK: - Click & Double-Click Dispatcher
+    // MARK: - Short Click (Quick Action) vs. Long-Press / Right-Click (Menu)
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else {
-            showMenu()
+            executeQuickAction()
             return
         }
 
-        // 1. Right Click -> Always opens the menu immediately
-        if event.type == .rightMouseUp {
-            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(handlePendingSingleClick), object: nil)
+        switch event.type {
+        case .rightMouseDown, .rightMouseUp:
+            cancelLongPressTimer()
             showMenu()
-            return
-        }
 
-        // 2. Left Click Handling
-        if event.clickCount == 2 {
-            // Cancel pending single-click action
-            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(handlePendingSingleClick), object: nil)
-            handleDoubleClick()
-        } else if event.clickCount == 1 {
-            let config = Config.load()
-            if config.menuBarSingleClickAction != "menu" && config.menuBarDoubleClickAction == config.menuBarSingleClickAction {
-                executeAction(named: config.menuBarSingleClickAction)
-            } else {
-                // Wait briefly (0.22s) so a rapid second click can be caught as double-click
-                perform(#selector(handlePendingSingleClick), with: nil, afterDelay: 0.22)
+        case .leftMouseDown:
+            isLongPressTriggered = false
+            mouseDownTime = Date()
+            cancelLongPressTimer()
+            longPressTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                self.isLongPressTriggered = true
+                self.showMenu()
             }
+
+        case .leftMouseUp:
+            let elapsed = Date().timeIntervalSince(mouseDownTime)
+            cancelLongPressTimer()
+            if isLongPressTriggered || elapsed >= 0.35 {
+                // Already triggered menu via long press
+                return
+            }
+            // Rapid short left-click: Trigger Quick Action!
+            executeQuickAction()
+
+        default:
+            break
         }
     }
 
-    @objc private func handlePendingSingleClick() {
-        let config = Config.load()
-        executeAction(named: config.menuBarSingleClickAction)
+    private func cancelLongPressTimer() {
+        longPressTimer?.invalidate()
+        longPressTimer = nil
     }
 
-    private func handleDoubleClick() {
+    private func executeQuickAction() {
         let config = Config.load()
-        executeAction(named: config.menuBarDoubleClickAction)
-    }
-
-    private func executeAction(named actionName: String) {
-        switch actionName.lowercased() {
+        switch config.menuBarQuickAction.lowercased() {
+        case "actions", "quickmenu", "quick-menu":
+            showQuickActionsMenu()
         case "settings", "gui":
             openGUIAction()
-        case "rearrange", "optimize":
-            rearrangeAction()
         case "master":
             setMasterAction()
         case "uniform", "clear-master":
             clearMasterAction()
         case "menu":
             showMenu()
+        case "rearrange", "optimize":
+            fallthrough
         default:
             rearrangeAction()
         }
     }
 
-    private func showMenu() {
+    // MARK: - Compact Quick Actions Menu (Left-Click Option)
+    @objc func showQuickActionsMenu() {
+        let quickMenu = NSMenu()
+
+        let titleItem = NSMenuItem(title: "SpaceTile Schnellaktionen", action: nil, keyEquivalent: "")
+        titleItem.isEnabled = false
+        let font = NSFont.boldSystemFont(ofSize: 12)
+        titleItem.attributedTitle = NSAttributedString(string: "⚡ SpaceTile Schnellaktionen", attributes: [.font: font])
+        quickMenu.addItem(titleItem)
+
+        quickMenu.addItem(NSMenuItem.separator())
+
+        let rearrangeItem = NSMenuItem(title: "Fenster jetzt anordnen", action: #selector(rearrangeAction), keyEquivalent: " ")
+        rearrangeItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        rearrangeItem.target = self
+        quickMenu.addItem(rearrangeItem)
+
+        let masterItem = NSMenuItem(title: "Fokussiertes Fenster als Master", action: #selector(setMasterAction), keyEquivalent: "\r")
+        masterItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        masterItem.target = self
+        quickMenu.addItem(masterItem)
+
+        if WindowManager.shared.masterWindowID != nil {
+            let clearMasterItem = NSMenuItem(title: "Master aufheben (Gleichmäßig)", action: #selector(clearMasterAction), keyEquivalent: "")
+            clearMasterItem.target = self
+            quickMenu.addItem(clearMasterItem)
+        }
+
+        let floatItem = NSMenuItem(title: "Fenster pinnen (Immer oben float)", action: #selector(toggleFloatAction), keyEquivalent: "f")
+        floatItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        floatItem.target = self
+        quickMenu.addItem(floatItem)
+
+        let settingsItem = NSMenuItem(title: "Einstellungen öffnen...", action: #selector(openGUIAction), keyEquivalent: "s")
+        settingsItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        settingsItem.target = self
+        quickMenu.addItem(settingsItem)
+
+        quickMenu.addItem(NSMenuItem.separator())
+
+        let fullMenuItem = NSMenuItem(title: "Vollständiges Menü öffnen...", action: #selector(showMenu), keyEquivalent: "")
+        fullMenuItem.target = self
+        quickMenu.addItem(fullMenuItem)
+
+        statusItem?.popUpMenu(quickMenu)
+    }
+
+    @objc func showMenu() {
         buildMenu()
         statusItem?.popUpMenu(menu)
     }
@@ -209,29 +334,40 @@ class MenuBarController: NSObject, NSMenuDelegate {
         presetParent.submenu = presetsMenu
         menu.addItem(presetParent)
 
-        // 4. Menu Bar Double-Click Action Submenu
+        // 4. Menu Bar Quick Action Selection Submenu
         let clickMenu = NSMenu()
-        let actRearrange = NSMenuItem(title: "Fenster anordnen (Rearrange)", action: #selector(setDoubleClickRearrange), keyEquivalent: "")
+
+        let actRearrange = NSMenuItem(title: "Fenster anordnen (Rearrange)", action: #selector(setQuickActionRearrange), keyEquivalent: "")
         actRearrange.target = self
-        actRearrange.state = (config.menuBarDoubleClickAction == "rearrange") ? .on : .off
+        actRearrange.state = (config.menuBarQuickAction == "rearrange") ? .on : .off
         clickMenu.addItem(actRearrange)
 
-        let actSettings = NSMenuItem(title: "Einstellungen öffnen (Settings)", action: #selector(setDoubleClickSettings), keyEquivalent: "")
+        let actActions = NSMenuItem(title: "Aktions-Menü öffnen (Kompakt)", action: #selector(setQuickActionActions), keyEquivalent: "")
+        actActions.target = self
+        actActions.state = (config.menuBarQuickAction == "actions") ? .on : .off
+        clickMenu.addItem(actActions)
+
+        let actSettings = NSMenuItem(title: "Einstellungen öffnen", action: #selector(setQuickActionSettings), keyEquivalent: "")
         actSettings.target = self
-        actSettings.state = (config.menuBarDoubleClickAction == "settings") ? .on : .off
+        actSettings.state = (config.menuBarQuickAction == "settings") ? .on : .off
         clickMenu.addItem(actSettings)
 
-        let actMaster = NSMenuItem(title: "Fokussiertes Fenster als Master", action: #selector(setDoubleClickMaster), keyEquivalent: "")
+        let actMaster = NSMenuItem(title: "Fokussiertes Fenster als Master", action: #selector(setQuickActionMaster), keyEquivalent: "")
         actMaster.target = self
-        actMaster.state = (config.menuBarDoubleClickAction == "master") ? .on : .off
+        actMaster.state = (config.menuBarQuickAction == "master") ? .on : .off
         clickMenu.addItem(actMaster)
 
-        let actUniform = NSMenuItem(title: "Master aufheben (Gleichmäßig)", action: #selector(setDoubleClickUniform), keyEquivalent: "")
+        let actUniform = NSMenuItem(title: "Master aufheben (Gleichmäßig)", action: #selector(setQuickActionUniform), keyEquivalent: "")
         actUniform.target = self
-        actUniform.state = (config.menuBarDoubleClickAction == "uniform") ? .on : .off
+        actUniform.state = (config.menuBarQuickAction == "uniform") ? .on : .off
         clickMenu.addItem(actUniform)
 
-        let clickParent = NSMenuItem(title: "Logo-Doppelklick Aktion", action: nil, keyEquivalent: "")
+        let actMenu = NSMenuItem(title: "Vollständiges Menü öffnen", action: #selector(setQuickActionMenu), keyEquivalent: "")
+        actMenu.target = self
+        actMenu.state = (config.menuBarQuickAction == "menu") ? .on : .off
+        clickMenu.addItem(actMenu)
+
+        let clickParent = NSMenuItem(title: "Schnellaktion (Linksklick)", action: nil, keyEquivalent: "")
         clickParent.submenu = clickMenu
         menu.addItem(clickParent)
 
@@ -255,27 +391,39 @@ class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Actions
-    @objc private func setDoubleClickRearrange() {
+    @objc private func setQuickActionRearrange() {
         var cfg = Config.load()
-        cfg.menuBarDoubleClickAction = "rearrange"
+        cfg.menuBarQuickAction = "rearrange"
         cfg.save()
     }
 
-    @objc private func setDoubleClickSettings() {
+    @objc private func setQuickActionActions() {
         var cfg = Config.load()
-        cfg.menuBarDoubleClickAction = "settings"
+        cfg.menuBarQuickAction = "actions"
         cfg.save()
     }
 
-    @objc private func setDoubleClickMaster() {
+    @objc private func setQuickActionSettings() {
         var cfg = Config.load()
-        cfg.menuBarDoubleClickAction = "master"
+        cfg.menuBarQuickAction = "settings"
         cfg.save()
     }
 
-    @objc private func setDoubleClickUniform() {
+    @objc private func setQuickActionMaster() {
         var cfg = Config.load()
-        cfg.menuBarDoubleClickAction = "uniform"
+        cfg.menuBarQuickAction = "master"
+        cfg.save()
+    }
+
+    @objc private func setQuickActionUniform() {
+        var cfg = Config.load()
+        cfg.menuBarQuickAction = "uniform"
+        cfg.save()
+    }
+
+    @objc private func setQuickActionMenu() {
+        var cfg = Config.load()
+        cfg.menuBarQuickAction = "menu"
         cfg.save()
     }
 
@@ -329,6 +477,9 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func restartDaemonAction() {
         ServiceInstaller.restart()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.refreshIcon()
+        }
     }
 
     @objc private func quitAction() {

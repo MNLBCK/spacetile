@@ -11,22 +11,26 @@ struct AnimatedTileVisualizer: View {
 
     var body: some View {
         VStack(spacing: 1.5) {
-            // Sleek 16:9 Monitor Enclosure
+            // Sleek 16:9 Monitor Enclosure Harmonized with Dock Icon
             ZStack {
-                // Monitor Bezel
-                RoundedRectangle(cornerRadius: 3.5)
-                    .fill(Color(NSColor.darkGray).opacity(0.55))
+                // Monitor Bezel (Dark Space Titanium)
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(red: 0.13, green: 0.14, blue: 0.17))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 3.5)
-                            .stroke(Color.primary.opacity(0.25), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
                     )
 
                 // Screen Glass Area
+                RoundedRectangle(cornerRadius: 2.5)
+                    .fill(Color(red: 0.05, green: 0.06, blue: 0.08))
+                    .padding(2)
+
                 GeometryReader { geo in
                     let w = geo.size.width
                     let h = geo.size.height
-                    let pad: CGFloat = 2.5
-                    let gap: CGFloat = 1.5
+                    let pad: CGFloat = 3.0
+                    let gap: CGFloat = 1.8
 
                     let innerW = w - 2 * pad
                     let innerH = h - 2 * pad
@@ -96,23 +100,23 @@ struct AnimatedTileVisualizer: View {
                     }()
 
                     ZStack(alignment: .topLeading) {
-                        // Master Window (Settings Blue/Cyan palette, No Blur Glow)
-                        RoundedRectangle(cornerRadius: 2)
+                        // Master Window (Electric Cyan -> Azure Gradient matching Dock AppIcon)
+                        RoundedRectangle(cornerRadius: 2.2)
                             .fill(
                                 LinearGradient(
-                                    colors: [Color(red: 0.0, green: 0.38, blue: 0.58), Color(red: 0.01, green: 0.52, blue: 0.78)],
+                                    colors: [Color(red: 0.10, green: 0.83, blue: 0.99), Color(red: 0.05, green: 0.48, blue: 0.94)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 2)
-                                    .stroke(Color.cyan.opacity(0.65), lineWidth: 0.8)
+                                RoundedRectangle(cornerRadius: 2.2)
+                                    .stroke(Color(red: 0.51, green: 0.92, blue: 0.99).opacity(0.85), lineWidth: 0.8)
                             )
                             .frame(width: max(0, masterFrame.width), height: max(0, masterFrame.height))
                             .offset(x: masterFrame.origin.x, y: masterFrame.origin.y)
 
-                        // Secondary Windows (Frosted slate)
+                        // Secondary Windows (Frosted Slate)
                         miniTile(frame: r1Frame)
                         miniTile(frame: r2Frame)
                         if mode != 1 { miniTile(frame: r3Frame) }
@@ -126,10 +130,16 @@ struct AnimatedTileVisualizer: View {
             }
             .frame(width: width, height: height)
 
-            // Sleek Aluminum Monitor Foot / Stand
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color(NSColor.tertiaryLabelColor).opacity(0.6))
-                .frame(width: width * 0.28, height: 2.2)
+            // Sleek Brushed Aluminum Stand (Neck + Base matching Dock Icon)
+            VStack(spacing: 0.5) {
+                Rectangle()
+                    .fill(Color(red: 0.70, green: 0.73, blue: 0.78))
+                    .frame(width: width * 0.12, height: 2.0)
+
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color(red: 0.70, green: 0.73, blue: 0.78))
+                    .frame(width: width * 0.36, height: 2.2)
+            }
         }
         .onReceive(timer) { _ in
             layoutStep += 1
@@ -141,10 +151,10 @@ struct AnimatedTileVisualizer: View {
 
     private func miniTile(frame: CGRect) -> some View {
         RoundedRectangle(cornerRadius: 1.5)
-            .fill(Color(NSColor.textColor).opacity(0.18))
+            .fill(Color(red: 0.22, green: 0.22, blue: 0.25))
             .overlay(
                 RoundedRectangle(cornerRadius: 1.5)
-                    .stroke(Color(NSColor.textColor).opacity(0.35), lineWidth: 0.6)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 0.6)
             )
             .frame(width: max(0, frame.width), height: max(0, frame.height))
             .offset(x: frame.origin.x, y: frame.origin.y)
@@ -478,6 +488,11 @@ struct LiveGridView: View {
 // MARK: - Main Settings View
 struct SettingsView: View {
     @State private var config: Config = Config.load()
+    @State private var originalConfig: Config = Config.load()
+    @State private var showUnsavedChangesAlert: Bool = false
+    private var hasUnsavedChanges: Bool {
+        config != originalConfig
+    }
     @State private var statusMessage: String?
     @State private var currentWindows: [ManagedWindow] = []
     @State private var currentMasterID: CGWindowID? = WindowManager.shared.masterWindowID
@@ -695,20 +710,17 @@ struct SettingsView: View {
 
                 Button("Reset Defaults") {
                     config = Config.default
-                    config.save()
-                    _ = HotKeyManager.shared.register(config: config)
+                    saveConfig()
                     showStatus("Defaults restored.")
                 }
 
                 Button("Save Changes") {
-                    config.save()
-                    _ = HotKeyManager.shared.register(config: config)
-                    showStatus("Settings saved successfully.")
+                    saveConfig()
                 }
                 .keyboardShortcut(.defaultAction)
 
                 Button("Close") {
-                    SettingsWindowController.shared.close()
+                    requestClose()
                 }
             }
             .padding(.horizontal, 18)
@@ -716,9 +728,26 @@ struct SettingsView: View {
             .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
         }
         .frame(width: 940, height: 740)
+        .onExitCommand {
+            requestClose()
+        }
+        .alert("Ungespeicherte Änderungen", isPresented: $showUnsavedChangesAlert) {
+            Button("Speichern & Schließen") {
+                saveConfig()
+                SettingsWindowController.shared.forceClose()
+            }
+            Button("Nicht speichern", role: .destructive) {
+                config = originalConfig
+                SettingsWindowController.shared.forceClose()
+            }
+            Button("Abbrechen", role: .cancel) { }
+        } message: {
+            Text("Du hast ungespeicherte Änderungen vorgenommen. Möchtest du diese vor dem Schließen speichern?")
+        }
         .onAppear {
             refreshData()
             checkStatus()
+            setupCloseAndEscHandler()
         }
         .onReceive(pollTimer) { _ in
             checkStatus()
@@ -779,6 +808,7 @@ struct SettingsView: View {
         }
         .onDisappear {
             stopRecording()
+            removeEscHandler()
         }
         .sheet(isPresented: $showFeedbackSheet) {
             FeedbackSheetView(isPresented: $showFeedbackSheet, selectedType: feedbackSheetType)
@@ -1193,18 +1223,17 @@ struct SettingsView: View {
 
                     Divider()
 
-                    HStack(spacing: 16) {
+                    HStack {
                         Text("Einzel-Fenster Modus:")
                             .fontWeight(.medium)
-                            .frame(width: 160, alignment: .leading)
-
+                        Spacer()
                         Picker("", selection: $config.singleWindowMode) {
                             Text("Zentriert (Ergonomisch)").tag("centered")
                             Text("Maximiert (Volle Arbeitsfläche)").tag("maximized")
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(maxWidth: 380)
+                        .frame(width: 360)
                     }
                 }
                 .padding(8)
@@ -1212,18 +1241,17 @@ struct SettingsView: View {
 
             GroupBox(label: Label("Fenster-Animation & Glätte", systemImage: "speedometer")) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 16) {
+                    HStack {
                         Text("Bewegungsmodus:")
-                            .font(.subheadline.bold())
-                            .frame(width: 160, alignment: .leading)
-
+                            .fontWeight(.medium)
+                        Spacer()
                         Picker("", selection: $config.animationMode) {
                             Text("Direkt (Sofortiges Einrasten)").tag("instant")
                             Text("Flüssige Gleit-Animation").tag("smooth")
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(maxWidth: 380)
+                        .frame(width: 360)
                     }
 
                     if config.animationMode == "smooth" {
@@ -1259,34 +1287,25 @@ struct SettingsView: View {
 
             GroupBox(label: Label("Menüleiste & Dual-Focus", systemImage: "menubar.rectangle")) {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 16) {
-                        Text("Logo-Doppelklick:")
+                    HStack {
+                        Text("Schnellaktion (Linksklick auf Logo):")
                             .fontWeight(.medium)
-                            .frame(width: 170, alignment: .leading)
-
-                        Picker("", selection: $config.menuBarDoubleClickAction) {
+                        Spacer()
+                        Picker("", selection: $config.menuBarQuickAction) {
                             Text("Fenster anordnen (Rearrange)").tag("rearrange")
-                            Text("Einstellungen öffnen (Settings)").tag("settings")
+                            Text("Aktions-Menü öffnen (Kompakt)").tag("actions")
+                            Text("Einstellungen öffnen").tag("settings")
                             Text("Fokussiertes Fenster als Master").tag("master")
                             Text("Master aufheben (Gleichmäßig)").tag("uniform")
+                            Text("Vollständiges Menü öffnen").tag("menu")
                         }
                         .labelsHidden()
-                        .frame(maxWidth: 320)
+                        .frame(width: 360)
                     }
 
-                    HStack(spacing: 16) {
-                        Text("Logo-Einfachklick:")
-                            .fontWeight(.medium)
-                            .frame(width: 170, alignment: .leading)
-
-                        Picker("", selection: $config.menuBarSingleClickAction) {
-                            Text("Menü öffnen (Standard)").tag("menu")
-                            Text("Einstellungen öffnen").tag("settings")
-                            Text("Fenster anordnen").tag("rearrange")
-                        }
-                        .labelsHidden()
-                        .frame(maxWidth: 320)
-                    }
+                    Text("Hinweis: Rechtsklick oder langes Drücken (> 0,35s) auf das Logo öffnet immer das vollständige Menü.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
                     Divider()
 
@@ -2218,6 +2237,50 @@ struct SettingsView: View {
         statusMessage = msg
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             statusMessage = nil
+        }
+    }
+
+    func saveConfig() {
+        config.save()
+        originalConfig = config
+        _ = HotKeyManager.shared.register(config: config)
+        MenuBarController.shared.refreshIcon()
+        showStatus("Settings saved successfully.")
+    }
+
+    func requestClose() {
+        if hasUnsavedChanges {
+            showUnsavedChangesAlert = true
+        } else {
+            SettingsWindowController.shared.forceClose()
+        }
+    }
+
+    private func setupCloseAndEscHandler() {
+        SettingsWindowController.shared.hasUnsavedChangesHandler = { [self] in
+            return self.hasUnsavedChanges
+        }
+        SettingsWindowController.shared.requestCloseHandler = { [self] in
+            self.requestClose()
+        }
+
+        if localEventMonitor == nil {
+            localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+                if event.keyCode == 53 { // ESC key
+                    DispatchQueue.main.async {
+                        self.requestClose()
+                    }
+                    return nil
+                }
+                return event
+            }
+        }
+    }
+
+    private func removeEscHandler() {
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
         }
     }
 }

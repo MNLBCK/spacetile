@@ -5,6 +5,9 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
     private var window: NSWindow?
+    var hasUnsavedChangesHandler: (() -> Bool)?
+    var requestCloseHandler: (() -> Void)?
+    private var isForcingClose = false
 
     func show(initialTab: String? = nil) {
         DispatchQueue.main.async { [weak self] in
@@ -65,12 +68,37 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    func close() {
+    func forceClose() {
+        isForcingClose = true
         window?.close()
+        isForcingClose = false
+    }
+
+    func close() {
+        if isForcingClose {
+            window?.close()
+            return
+        }
+        if let handler = requestCloseHandler {
+            handler()
+        } else {
+            window?.close()
+        }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if isForcingClose { return true }
+        if let hasChanges = hasUnsavedChangesHandler?(), hasChanges {
+            requestCloseHandler?()
+            return false
+        }
+        return true
     }
 
     func windowWillClose(_ notification: Notification) {
         window = nil
+        hasUnsavedChangesHandler = nil
+        requestCloseHandler = nil
         if CommandLine.arguments.contains("daemon") {
             NSApp.setActivationPolicy(.accessory)
         } else {

@@ -1,6 +1,6 @@
 cask "spacetile" do
-  version "1.5.8"
-  sha256 "b4e32af00c9e029e868f9d34fbce3038af1aa75c2808c54ea2bc48bdeb92e536"
+  version "1.5.9"
+  sha256 "118331c6a101d809fad7a04274b29f0934e0259e9147d1b566a3b3697a59f0fa"
 
   url "https://github.com/MNLBCK/spacetile/releases/download/v#{version}/SpaceTile-v#{version}.zip"
   name "SpaceTile"
