@@ -28,6 +28,7 @@ class WindowManager {
     private(set) var lockedWindowIDs: Set<CGWindowID> = []
     private(set) var floatingWindowIDs: Set<CGWindowID> = []
     private(set) var masterWindowID: CGWindowID?
+    private(set) var secondaryFocusWindowID: CGWindowID?
     private(set) var windowScoreOverrides: [CGWindowID: Int] = [:]
     private var lastRunTime: Date?
     private var lastMasterShortcutTimestamp: TimeInterval = 0
@@ -64,6 +65,13 @@ class WindowManager {
             setMasterWindow(id: idA)
         }
 
+        // If one of them was secondary focus, update secondaryFocusWindowID
+        if secondaryFocusWindowID == idA {
+            setSecondaryFocusWindow(id: idB)
+        } else if secondaryFocusWindowID == idB {
+            setSecondaryFocusWindow(id: idA)
+        }
+
         DistributedNotificationCenter.default().postNotificationName(
             NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
             object: nil,
@@ -87,10 +95,16 @@ class WindowManager {
         return home.appendingPathComponent(".config/spacetile/master_window.json")
     }
 
+    static var secondaryFocusStoreURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".config/spacetile/secondary_focus.json")
+    }
+
     init() {
         reloadLockedWindowIDs()
         reloadFloatingWindowIDs()
         reloadMasterWindowID()
+        reloadSecondaryFocusWindowID()
     }
 
     func reloadMasterWindowID() {
@@ -125,6 +139,77 @@ class WindowManager {
             userInfo: nil,
             deliverImmediately: true
         )
+    }
+
+    func reloadSecondaryFocusWindowID() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard FileManager.default.fileExists(atPath: WindowManager.secondaryFocusStoreURL.path),
+              let data = try? Data(contentsOf: WindowManager.secondaryFocusStoreURL),
+              let id = try? JSONDecoder().decode(UInt32.self, from: data) else {
+            self.secondaryFocusWindowID = nil
+            return
+        }
+        self.secondaryFocusWindowID = CGWindowID(id)
+    }
+
+    func persistSecondaryFocusWindowID() {
+        stateLock.lock()
+        let currentID = secondaryFocusWindowID
+        stateLock.unlock()
+
+        let url = WindowManager.secondaryFocusStoreURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let id = currentID {
+            if let data = try? JSONEncoder().encode(UInt32(id)) {
+                try? data.write(to: url, options: .atomic)
+            }
+        } else {
+            try? FileManager.default.removeItem(at: url)
+        }
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.secondaryFocusChanged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+    }
+
+    func setSecondaryFocusWindow(id: CGWindowID) {
+        stateLock.lock()
+        if self.secondaryFocusWindowID == id {
+            self.secondaryFocusWindowID = nil
+        } else {
+            self.secondaryFocusWindowID = id
+        }
+        stateLock.unlock()
+        persistSecondaryFocusWindowID()
+        _ = optimize(verbose: true)
+    }
+
+    func clearSecondaryFocusWindow() {
+        stateLock.lock()
+        self.secondaryFocusWindowID = nil
+        stateLock.unlock()
+        persistSecondaryFocusWindowID()
+        _ = optimize(verbose: true)
+    }
+
+    func setFocusedAsSecondaryFocus() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return false }
+        if front.processIdentifier == ProcessInfo.processInfo.processIdentifier || front.localizedName == "SpaceTile" {
+            return false
+        }
+        let appRef = AXUIElementCreateApplication(front.processIdentifier)
+        var winRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+              let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() else { return false }
+
+        var winID: CGWindowID = 0
+        guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return false }
+
+        setSecondaryFocusWindow(id: winID)
+        return true
     }
 
     func setMasterWindow(id: CGWindowID) {
@@ -410,7 +495,9 @@ class WindowManager {
         }
 
         reloadLockedWindowIDs()
+        reloadFloatingWindowIDs()
         reloadMasterWindowID()
+        reloadSecondaryFocusWindowID()
         let config = Config.load()
 
         guard let targetScreen = findTargetScreen() else {
@@ -462,6 +549,29 @@ class WindowManager {
             if masterWindowID != fid {
                 masterWindowID = fid
                 persistMasterWindowID()
+            }
+        }
+
+        // Handle Secondary Focus (Focus 2) when Dual-Focus is active and count >= 2
+        if config.enableDualFocus && tilingWindows.count >= 2 {
+            let effectiveSecID: CGWindowID?
+            if let secID = secondaryFocusWindowID, tilingWindows.dropFirst().contains(where: { $0.id == secID }) {
+                effectiveSecID = secID
+            } else {
+                let candidates = Array(tilingWindows.dropFirst())
+                if let browserOrEditor = candidates.first(where: {
+                    let app = $0.appName.lowercased()
+                    return $0.score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser") || app.contains("code") || app.contains("cursor")
+                }) {
+                    effectiveSecID = browserOrEditor.id
+                } else {
+                    effectiveSecID = candidates.max(by: { $0.score < $1.score })?.id
+                }
+            }
+
+            if let secID = effectiveSecID, let idx = tilingWindows.firstIndex(where: { $0.id == secID }) {
+                let secWin = tilingWindows.remove(at: idx)
+                tilingWindows.insert(secWin, at: 1)
             }
         }
 
@@ -526,7 +636,8 @@ class WindowManager {
             print("[\u{001B}[32mSpaceTile\u{001B}[0m] Arranged \(countStr) windows on '\(targetScreen.localizedName)'")
             for (i, win) in tilingWindows.enumerated() {
                 let isMaster = (effectiveMasterID != nil && win.id == effectiveMasterID)
-                let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (isMaster ? "\u{001B}[32m★ Master\u{001B}[0m" : "  Tiled ")
+                let isSecFocus = (config.enableDualFocus && i == 1 && tilingWindows.count >= 2)
+                let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (isMaster ? "\u{001B}[32m★ Master\u{001B}[0m" : (isSecFocus ? "\u{001B}[36m◈ Focus \u{001B}[0m" : "  Tiled "))
                 let f = frames[i]
                 print(String(format: " %@[%@ (Score %d)] -> %dx%d @ (%d, %d)",
                              tag, win.appName, win.score, Int(f.width), Int(f.height), Int(f.origin.x), Int(f.origin.y)))
@@ -581,7 +692,7 @@ class WindowManager {
 
         // Case B: ONE OR MORE windows are locked -> Reserve their grid tiles!
         let gap = config.gap
-        let is4K = screen.frame.width >= 2560
+        let is4K = screen.frame.width >= 2000 || screen.visibleFrame.width >= 2000
         let totalCols: Int = is4K ? 12 : 6
         let totalRows: Int = is4K ? 6 : 4
 
@@ -754,7 +865,7 @@ class WindowManager {
         guard count > 0 else { return [] }
 
         let gap = config.gap
-        let is4K = screen.frame.width >= 2560
+        let is4K = screen.frame.width >= 2000 || screen.visibleFrame.width >= 2000
 
         // Dynamic Grid: 10 Cols x 6 Rows on 4K/Ultrawide (60 tiles), 6 Cols x 4 Rows on standard
         let totalCols: Int = is4K ? 10 : (count <= 2 ? 6 : 8)
@@ -833,7 +944,8 @@ class WindowManager {
                 let colW = floor((workArea.width - 2 * gap) / 3.0)
                 for i in 0..<3 {
                     let cx = workArea.origin.x + CGFloat(i) * (colW + gap)
-                    resultFrames[i] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: colW, height: floor(workArea.height))
+                    let thisW = (i == 2) ? (workArea.origin.x + workArea.width - cx) : colW
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: floor(thisW), height: floor(workArea.height))
                 }
                 return resultFrames
             }
@@ -849,246 +961,354 @@ class WindowManager {
                 return resultFrames
             }
 
-            if is4K {
-                // 3 Equal-Width Columns with Master in the Center!
-                let colW = floor((workArea.width - 2 * gap) / 3.0)
-                let col0X = workArea.origin.x
-                let col1X = workArea.origin.x + colW + gap
-                let col2X = workArea.origin.x + 2 * (colW + gap)
+            // 3 Equal-Width Columns: Focus 2 on Left, Master Centered, Window 2 on Right!
+            let colW = floor((workArea.width - 2 * gap) / 3.0)
+            let col0X = workArea.origin.x
+            let col1X = workArea.origin.x + colW + gap
+            let col2X = workArea.origin.x + 2 * (colW + gap)
+            let col2W = workArea.origin.x + workArea.width - col2X
 
-                // Master centered
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-
-                var sec = [1, 2]
-                let leftIdx: Int
-                if let bIdx = sec.first(where: {
-                    let app = windows[$0].appName.lowercased()
-                    return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
-                }) {
-                    leftIdx = bIdx
-                } else {
-                    leftIdx = sec[0]
-                }
-                sec.removeAll { $0 == leftIdx }
-                let rightIdx = sec[0]
-
-                resultFrames[leftIdx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-                resultFrames[rightIdx] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-                return resultFrames
-            }
-
-            let masterCols: Int = is4K ? 6 : (totalCols * 6 / 10)
-            let stackCols = totalCols - masterCols
-            let r0 = totalRows / 2
-            let r1 = totalRows - r0
-            resultFrames[0] = rectFor(col: 0, row: 0, colSpan: masterCols, rowSpan: totalRows)
-            resultFrames[1] = rectFor(col: masterCols, row: 0, colSpan: stackCols, rowSpan: r0)
-            resultFrames[2] = rectFor(col: masterCols, row: r0, colSpan: stackCols, rowSpan: r1)
+            resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+            resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+            resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(workArea.height))
             return resultFrames
         }
 
         // 4+ Windows
-        let cellW3 = (workArea.width - 2 * gap) / 3.0
-        let cellH3 = (workArea.height - 2 * gap) / 3.0
-
-        // Case A: Wenn KEIN Master-Fenster gesetzt ist (masterWindowID == nil) -> Gleichmäßiges, balanciertes Raster!
+        // Case A: Wenn KEIN Master-Fenster gesetzt ist (masterWindowID == nil) -> Gleichmäßiges Raster mit 100% Flächennutzung (0% Lücken)!
         if masterWindowID == nil {
             if count == 4 {
                 let halfW = floor((workArea.width - gap) / 2.0)
+                let otherW = workArea.origin.x + workArea.width - (workArea.origin.x + halfW + gap)
                 let halfH = floor((workArea.height - gap) / 2.0)
-                resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: halfW, height: halfH)
-                resultFrames[1] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: halfW, height: halfH)
-                resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + halfH + gap), width: halfW, height: halfH)
-                resultFrames[3] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y + halfH + gap), width: halfW, height: halfH)
+                let otherH = workArea.origin.y + workArea.height - (workArea.origin.y + halfH + gap)
+                resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(halfW), height: floor(halfH))
+                resultFrames[1] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: floor(otherW), height: floor(halfH))
+                resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y + halfH + gap), width: floor(halfW), height: floor(otherH))
+                resultFrames[3] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y + halfH + gap), width: floor(otherW), height: floor(otherH))
                 return resultFrames
             }
             if count == 5 {
                 let halfH = floor((workArea.height - gap) / 2.0)
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + halfH + gap)
                 let topW = floor((workArea.width - 2 * gap) / 3.0)
                 let botW = floor((workArea.width - gap) / 2.0)
                 let botY = workArea.origin.y + halfH + gap
                 for i in 0..<3 {
                     let cx = workArea.origin.x + CGFloat(i) * (topW + gap)
-                    resultFrames[i] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: topW, height: halfH)
+                    let thisW = (i == 2) ? (workArea.origin.x + workArea.width - cx) : topW
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: floor(thisW), height: floor(halfH))
                 }
                 for i in 0..<2 {
                     let cx = workArea.origin.x + CGFloat(i) * (botW + gap)
-                    resultFrames[3 + i] = CGRect(x: floor(cx), y: floor(botY), width: botW, height: halfH)
+                    let thisW = (i == 1) ? (workArea.origin.x + workArea.width - cx) : botW
+                    resultFrames[3 + i] = CGRect(x: floor(cx), y: floor(botY), width: floor(thisW), height: floor(botH))
                 }
                 return resultFrames
             }
             if count == 6 {
                 let colW = floor((workArea.width - 2 * gap) / 3.0)
                 let halfH = floor((workArea.height - gap) / 2.0)
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + halfH + gap)
                 for i in 0..<6 {
                     let c = i % 3
                     let r = i / 3
                     let cx = workArea.origin.x + CGFloat(c) * (colW + gap)
-                    let cy = workArea.origin.y + CGFloat(r) * (halfH + gap)
-                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: colW, height: halfH)
+                    let cy = (r == 0) ? workArea.origin.y : (workArea.origin.y + halfH + gap)
+                    let thisW = (c == 2) ? (workArea.origin.x + workArea.width - cx) : colW
+                    let thisH = (r == 0) ? halfH : botH
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: floor(thisW), height: floor(thisH))
                 }
                 return resultFrames
             }
-            if count == 7 || count == 8 {
+            if count == 7 {
+                let halfH = floor((workArea.height - gap) / 2.0)
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + halfH + gap)
+                let topW = floor((workArea.width - 3 * gap) / 4.0)
+                let botW = floor((workArea.width - 2 * gap) / 3.0)
+                let botY = workArea.origin.y + halfH + gap
+                for i in 0..<4 {
+                    let cx = workArea.origin.x + CGFloat(i) * (topW + gap)
+                    let thisW = (i == 3) ? (workArea.origin.x + workArea.width - cx) : topW
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: floor(thisW), height: floor(halfH))
+                }
+                for i in 0..<3 {
+                    let cx = workArea.origin.x + CGFloat(i) * (botW + gap)
+                    let thisW = (i == 2) ? (workArea.origin.x + workArea.width - cx) : botW
+                    resultFrames[4 + i] = CGRect(x: floor(cx), y: floor(botY), width: floor(thisW), height: floor(botH))
+                }
+                return resultFrames
+            }
+            if count == 8 {
                 let colW = floor((workArea.width - 3 * gap) / 4.0)
                 let halfH = floor((workArea.height - gap) / 2.0)
-                for i in 0..<count {
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + halfH + gap)
+                for i in 0..<8 {
                     let c = i % 4
                     let r = i / 4
                     let cx = workArea.origin.x + CGFloat(c) * (colW + gap)
-                    let cy = workArea.origin.y + CGFloat(r) * (halfH + gap)
-                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: colW, height: halfH)
+                    let cy = (r == 0) ? workArea.origin.y : (workArea.origin.y + halfH + gap)
+                    let thisW = (c == 3) ? (workArea.origin.x + workArea.width - cx) : colW
+                    let thisH = (r == 0) ? halfH : botH
+                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: floor(thisW), height: floor(thisH))
                 }
                 return resultFrames
             }
             if count >= 9 {
-                let cols = 3
-                let rows = Int(ceil(Double(count) / 3.0))
-                let colW = floor((workArea.width - CGFloat(cols - 1) * gap) / CGFloat(cols))
+                let cols = is4K ? 4 : 3
+                let rows = Int(ceil(Double(count) / Double(cols)))
                 let rowH = floor((workArea.height - CGFloat(rows - 1) * gap) / CGFloat(rows))
-                for i in 0..<count {
-                    let c = i % cols
-                    let r = i / cols
-                    let cx = workArea.origin.x + CGFloat(c) * (colW + gap)
+                var winIdx = 0
+                for r in 0..<rows {
+                    let countInRow = (r == rows - 1) ? (count - winIdx) : cols
+                    let colW = floor((workArea.width - CGFloat(countInRow - 1) * gap) / CGFloat(countInRow))
                     let cy = workArea.origin.y + CGFloat(r) * (rowH + gap)
-                    resultFrames[i] = CGRect(x: floor(cx), y: floor(cy), width: colW, height: rowH)
+                    let thisH = (r == rows - 1) ? (workArea.origin.y + workArea.height - cy) : rowH
+                    for c in 0..<countInRow {
+                        let cx = workArea.origin.x + CGFloat(c) * (colW + gap)
+                        let thisW = (c == countInRow - 1) ? (workArea.origin.x + workArea.width - cx) : colW
+                        resultFrames[winIdx] = CGRect(x: floor(cx), y: floor(cy), width: floor(thisW), height: floor(thisH))
+                        winIdx += 1
+                    }
                 }
                 return resultFrames
             }
         }
 
-        // Case B: Master-Layout auf 4K/Ultrawide (Master zentriert in Spalte 1, 2/3 Höhe)
+        // Case B: Master & Dual-Focus Layout (Master window active)
+        // Focus 1 (Master: windows[0]) and Focus 2 (Secondary: windows[1]) are GUARANTEED to be the two largest windows.
+        // 100% display area is utilized with ZERO empty voids/holes!
         if is4K {
             let colW = floor((workArea.width - 2 * gap) / 3.0)
-            let topH = floor((workArea.height - gap) * (2.0 / 3.0))
-            let bottomH = workArea.height - gap - topH
-
             let col0X = workArea.origin.x
             let col1X = workArea.origin.x + colW + gap
             let col2X = workArea.origin.x + 2 * (colW + gap)
+            let col2W = workArea.origin.x + workArea.width - col2X
 
-            let topY = workArea.origin.y
-            let bottomY = workArea.origin.y + topH + gap
-
-            // 1. Center Top (Col 1, 2/3 height): Master Window (immer mittig, exakt gleiche Spaltenbreite colW wie die anderen!)
-            resultFrames[0] = CGRect(x: floor(col1X), y: floor(topY), width: floor(colW), height: floor(topH))
-
-            var availableIndices = Array(1..<count)
-
-            // 2. Left Top (Col 0, 2/3 height): Browser oder höchstbewertete Begleit-App (Breite colW!)
-            let browserIdx: Int
-            if let bIdx = availableIndices.first(where: {
-                let app = windows[$0].appName.lowercased()
-                return windows[$0].score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser")
-            }) {
-                browserIdx = bIdx
-            } else {
-                browserIdx = availableIndices[0]
+            if count == 4 {
+                // Col 0: Focus 2 (100% full height!)
+                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                // Col 1: Master (100% full height, centered!)
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                // Col 2: 2 windows stacked (each 50% height)
+                let halfH = floor((workArea.height - gap) / 2.0)
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + halfH + gap)
+                resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(halfH))
+                resultFrames[3] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + halfH + gap), width: floor(col2W), height: floor(botH))
+                return resultFrames
             }
-            availableIndices.removeAll { $0 == browserIdx }
-            resultFrames[browserIdx] = CGRect(x: floor(col0X), y: floor(topY), width: floor(colW), height: floor(topH))
 
-            // 3. Right Top (Col 2, 2/3 height): Aktivstes sekundäres Terminal (Breite colW!)
-            let rightTopIdx = availableIndices.removeFirst()
-            resultFrames[rightTopIdx] = CGRect(x: floor(col2X), y: floor(topY), width: floor(colW), height: floor(topH))
+            if count == 5 {
+                // Col 0: Focus 2 (100% full height!)
+                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                // Col 1: Master (100% full height, centered!)
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                // Col 2: 3 auxiliary windows stacked (each 33.3% height)
+                let cellH = floor((workArea.height - 2 * gap) / 3.0)
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + 2 * (cellH + gap))
+                resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(cellH))
+                resultFrames[3] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + cellH + gap), width: floor(col2W), height: floor(cellH))
+                resultFrames[4] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 2 * (cellH + gap)), width: floor(col2W), height: floor(botH))
+                return resultFrames
+            }
 
-            // 4. Bottom Tier (1/3 height): Alle verbleibenden Fenster sauber aufgeteilt
-            let remCount = availableIndices.count
-            if remCount == 1 {
-                // Ein einzelnes unteres Fenster zentriert unter Master
-                resultFrames[availableIndices[0]] = CGRect(x: floor(col1X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-            } else if remCount == 2 {
-                // Zwei untere Fenster 50/50 geteilt
-                let botW = floor((workArea.width - gap) / 2.0)
-                resultFrames[availableIndices[0]] = CGRect(x: floor(workArea.origin.x), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
-                resultFrames[availableIndices[1]] = CGRect(x: floor(workArea.origin.x + botW + gap), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
-            } else if remCount == 3 {
-                // Exakt 3 untere Fenster, je eins unter Col 0, Col 1, Col 2 (alle Breite colW!)
-                resultFrames[availableIndices[0]] = CGRect(x: floor(col0X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-                resultFrames[availableIndices[1]] = CGRect(x: floor(col1X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-                resultFrames[availableIndices[2]] = CGRect(x: floor(col2X), y: floor(bottomY), width: floor(colW), height: floor(bottomH))
-            } else if remCount >= 4 {
-                // 4+ untere Fenster gleichmäßig nebeneinander (z. B. bei 7 Fenstern = 4 Terminals je ~940px)
-                let botW = floor((workArea.width - CGFloat(remCount - 1) * gap) / CGFloat(remCount))
-                for (i, bIdx) in availableIndices.enumerated() {
-                    let bx = workArea.origin.x + CGFloat(i) * (botW + gap)
-                    resultFrames[bIdx] = CGRect(x: floor(bx), y: floor(bottomY), width: floor(botW), height: floor(bottomH))
+            if count == 6 {
+                // 3 Equal Columns, 2 Tiers: Top 2/3 height, Bottom 1/3 height
+                // Master centered in Col 1 Top; Focus 2 in Col 0 Top; Window 2 in Col 2 Top
+                // Bottom row: Windows 3, 4, 5 under Cols 0, 1, 2
+                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+                let botY = workArea.origin.y + topH + gap
+
+                // Col 0
+                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
+
+                // Col 1 (Center)
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
+
+                // Col 2
+                resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(topH))
+                resultFrames[5] = CGRect(x: floor(col2X), y: floor(botY), width: floor(col2W), height: floor(botH))
+                return resultFrames
+            }
+
+            if count == 7 {
+                // Col 0: Focus 2 (top 2/3) + Window 3 (bottom 1/3)
+                // Col 1: Master (top 2/3, centered) + Window 4 (bottom 1/3)
+                // Col 2: 3 windows stacked (Window 2, 5, 6, each 1/3 height)
+                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+                let botY = workArea.origin.y + topH + gap
+
+                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
+
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
+
+                let cellH = floor((workArea.height - 2 * gap) / 3.0)
+                let botCellH = workArea.origin.y + workArea.height - (workArea.origin.y + 2 * (cellH + gap))
+                resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(cellH))
+                resultFrames[5] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + cellH + gap), width: floor(col2W), height: floor(cellH))
+                resultFrames[6] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 2 * (cellH + gap)), width: floor(col2W), height: floor(botCellH))
+                return resultFrames
+            }
+
+            if count == 8 {
+                // Col 0: Focus 2 (top 2/3) + Window 3 (bottom 1/3)
+                // Col 1: Master (top 2/3, centered) + Window 4 (bottom 1/3)
+                // Col 2: 4 windows stacked (Window 2, 5, 6, 7, each 1/4 height)
+                let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+                let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+                let botY = workArea.origin.y + topH + gap
+
+                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
+
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
+
+                let cellH = floor((workArea.height - 3 * gap) / 4.0)
+                let botCellH = workArea.origin.y + workArea.height - (workArea.origin.y + 3 * (cellH + gap))
+                resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(cellH))
+                resultFrames[5] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + cellH + gap), width: floor(col2W), height: floor(cellH))
+                resultFrames[6] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 2 * (cellH + gap)), width: floor(col2W), height: floor(cellH))
+                resultFrames[7] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + 3 * (cellH + gap)), width: floor(col2W), height: floor(botCellH))
+                return resultFrames
+            }
+
+            // count >= 9:
+            let topH = floor((workArea.height - gap) * 0.55)
+            let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+            let botY = workArea.origin.y + topH + gap
+
+            resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+            resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+
+            let rem = count - 2
+            let c0Extra = rem / 3
+            let c1Extra = rem / 3
+            let c2Count = rem - c0Extra - c1Extra
+
+            var curIdx = 2
+
+            // Col 0 bottom extras
+            if c0Extra > 0 {
+                let eH = floor((botH - CGFloat(c0Extra - 1) * gap) / CGFloat(c0Extra))
+                for i in 0..<c0Extra {
+                    let ey = botY + CGFloat(i) * (eH + gap)
+                    let thisH = (i == c0Extra - 1) ? (workArea.origin.y + workArea.height - ey) : eH
+                    resultFrames[curIdx] = CGRect(x: floor(col0X), y: floor(ey), width: floor(colW), height: floor(thisH))
+                    curIdx += 1
+                }
+            }
+
+            // Col 1 bottom extras
+            if c1Extra > 0 {
+                let eH = floor((botH - CGFloat(c1Extra - 1) * gap) / CGFloat(c1Extra))
+                for i in 0..<c1Extra {
+                    let ey = botY + CGFloat(i) * (eH + gap)
+                    let thisH = (i == c1Extra - 1) ? (workArea.origin.y + workArea.height - ey) : eH
+                    resultFrames[curIdx] = CGRect(x: floor(col1X), y: floor(ey), width: floor(colW), height: floor(thisH))
+                    curIdx += 1
+                }
+            }
+
+            // Col 2 full column stack
+            if c2Count > 0 {
+                let eH = floor((workArea.height - CGFloat(c2Count - 1) * gap) / CGFloat(c2Count))
+                for i in 0..<c2Count {
+                    let ey = workArea.origin.y + CGFloat(i) * (eH + gap)
+                    let thisH = (i == c2Count - 1) ? (workArea.origin.y + workArea.height - ey) : eH
+                    resultFrames[curIdx] = CGRect(x: floor(col2X), y: floor(ey), width: floor(col2W), height: floor(thisH))
+                    curIdx += 1
                 }
             }
 
             return resultFrames
         }
 
-        func rect3x3(c: Int, r: Int, cSpan: Int, rSpan: Int) -> CGRect {
-            let x = workArea.origin.x + CGFloat(c) * (cellW3 + gap)
-            let y = workArea.origin.y + CGFloat(r) * (cellH3 + gap)
-            let w = CGFloat(cSpan) * cellW3 + CGFloat(cSpan - 1) * gap
-            let h = CGFloat(rSpan) * cellH3 + CGFloat(rSpan - 1) * gap
-            return CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h))
-        }
-
+        // Non-4K (Standard displays e.g. MacBook built-in screens)
         if count == 4 {
-            // Master (2/3 width, 2/3 height)
-            resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
-            // Bottom (under master: 2/3 width, 1/3 height)
-            resultFrames[1] = rect3x3(c: 0, r: 2, cSpan: 2, rSpan: 1)
-            // Right stack (2 windows: 1/3 width, 1/2 height each)
-            let halfH = (workArea.height - gap) / 2.0
-            let rightX = workArea.origin.x + 2 * (cellW3 + gap)
-            resultFrames[2] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
-            resultFrames[3] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
+            let halfW = floor((workArea.width - gap) / 2.0)
+            let otherW = workArea.origin.x + workArea.width - (workArea.origin.x + halfW + gap)
+            let topH = floor((workArea.height - gap) * 0.60)
+            let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+            let botY = workArea.origin.y + topH + gap
+
+            // Col 0: Focus 2 (top 60%) + Window 2 (bottom 40%)
+            resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(halfW), height: floor(topH))
+            resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(botY), width: floor(halfW), height: floor(botH))
+
+            // Col 1: Master (top 60%) + Window 3 (bottom 40%)
+            resultFrames[0] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: floor(otherW), height: floor(topH))
+            resultFrames[3] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(botY), width: floor(otherW), height: floor(botH))
             return resultFrames
         }
 
         if count == 5 {
-            // Master (2/3 width, 2/3 height)
-            resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
-            // Bottom 2 windows (under master: each 1/3 width, 1/3 height)
-            resultFrames[1] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
-            resultFrames[2] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
-            // Right stack (2 windows: 1/3 width, 1/2 height each)
-            let halfH = (workArea.height - gap) / 2.0
-            let rightX = workArea.origin.x + 2 * (cellW3 + gap)
-            resultFrames[3] = CGRect(x: floor(rightX), y: floor(workArea.origin.y), width: floor(cellW3), height: floor(halfH))
-            resultFrames[4] = CGRect(x: floor(rightX), y: floor(workArea.origin.y + halfH + gap), width: floor(cellW3), height: floor(halfH))
+            let halfW = floor((workArea.width - gap) / 2.0)
+            let otherW = workArea.origin.x + workArea.width - (workArea.origin.x + halfW + gap)
+            let topH = floor((workArea.height - gap) * 0.60)
+            let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+            let botY = workArea.origin.y + topH + gap
+
+            // Top tier: Focus 2 (left) and Master (right)
+            resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(halfW), height: floor(topH))
+            resultFrames[0] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: floor(otherW), height: floor(topH))
+
+            // Bottom tier: 3 windows evenly distributed
+            let botW = floor((workArea.width - 2 * gap) / 3.0)
+            for i in 0..<3 {
+                let bx = workArea.origin.x + CGFloat(i) * (botW + gap)
+                let thisW = (i == 2) ? (workArea.origin.x + workArea.width - bx) : botW
+                resultFrames[2 + i] = CGRect(x: floor(bx), y: floor(botY), width: floor(thisW), height: floor(botH))
+            }
             return resultFrames
         }
 
         if count == 6 {
-            // THE EXACT 6-WINDOW SIGNATURE 3x3 LAYOUT:
-            // Master (Top-Left: 2/3 width, 2/3 height)
-            resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
-            // Right 1 (Top-Right: 1/3 width, 1/3 height)
-            resultFrames[1] = rect3x3(c: 2, r: 0, cSpan: 1, rSpan: 1)
-            // Right 2 (Mid-Right: 1/3 width, 1/3 height)
-            resultFrames[2] = rect3x3(c: 2, r: 1, cSpan: 1, rSpan: 1)
-            // Right 3 (Bottom-Right: 1/3 width, 1/3 height)
-            resultFrames[3] = rect3x3(c: 2, r: 2, cSpan: 1, rSpan: 1)
-            // Bottom 1 (Bottom-Left: 1/3 width, 1/3 height)
-            resultFrames[4] = rect3x3(c: 0, r: 2, cSpan: 1, rSpan: 1)
-            // Bottom 2 (Bottom-Mid: 1/3 width, 1/3 height)
-            resultFrames[5] = rect3x3(c: 1, r: 2, cSpan: 1, rSpan: 1)
+            let colW = floor((workArea.width - 2 * gap) / 3.0)
+            let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+            let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+            let botY = workArea.origin.y + topH + gap
+
+            for i in 0..<3 {
+                let cx = workArea.origin.x + CGFloat(i) * (colW + gap)
+                let thisW = (i == 2) ? (workArea.origin.x + workArea.width - cx) : colW
+                let topIdx = (i == 0) ? 1 : ((i == 1) ? 0 : 2) // Col 0: Focus 2, Col 1: Master, Col 2: Win 2
+                resultFrames[topIdx] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: floor(thisW), height: floor(topH))
+                let botIdx = 3 + i
+                resultFrames[botIdx] = CGRect(x: floor(cx), y: floor(botY), width: floor(thisW), height: floor(botH))
+            }
             return resultFrames
         }
 
-        // For 7+ windows: Master gets top-left 2/3, remaining split into right stack and bottom row
-        resultFrames[0] = rect3x3(c: 0, r: 0, cSpan: 2, rSpan: 2)
-        let remIndices = Array(windows.indices.dropFirst())
-        let rightCount = (remIndices.count + 1) / 2
-        let bottomCount = remIndices.count - rightCount
+        // 7+ on standard display: 3 columns layout with zero empty spaces
+        let colW = floor((workArea.width - 2 * gap) / 3.0)
+        let topH = floor((workArea.height - gap) * (2.0 / 3.0))
+        let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+        let botY = workArea.origin.y + topH + gap
 
-        let rightH = (workArea.height - CGFloat(rightCount - 1) * gap) / CGFloat(rightCount)
-        let rightX = workArea.origin.x + 2 * (cellW3 + gap)
-        for i in 0..<rightCount {
-            let ry = workArea.origin.y + CGFloat(i) * (rightH + gap)
-            resultFrames[remIndices[i]] = CGRect(x: floor(rightX), y: floor(ry), width: floor(cellW3), height: floor(rightH))
-        }
+        resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+        resultFrames[3] = CGRect(x: floor(workArea.origin.x), y: floor(botY), width: floor(colW), height: floor(botH))
 
-        let bottomW = (2 * cellW3 + gap - CGFloat(bottomCount - 1) * gap) / CGFloat(bottomCount)
-        let bottomY = workArea.origin.y + 2 * (cellH3 + gap)
-        for i in 0..<bottomCount {
-            let bx = workArea.origin.x + CGFloat(i) * (bottomW + gap)
-            resultFrames[remIndices[rightCount + i]] = CGRect(x: floor(bx), y: floor(bottomY), width: floor(bottomW), height: floor(cellH3))
+        let col1X = workArea.origin.x + colW + gap
+        resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+        resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
+
+        let col2X = workArea.origin.x + 2 * (colW + gap)
+        let col2W = workArea.origin.x + workArea.width - col2X
+        let remCount = count - 5
+        let stackCount = 1 + remCount
+        let stackH = floor((workArea.height - CGFloat(stackCount - 1) * gap) / CGFloat(stackCount))
+        resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(stackH))
+        for i in 0..<remCount {
+            let sy = workArea.origin.y + CGFloat(i + 1) * (stackH + gap)
+            let thisH = (i == remCount - 1) ? (workArea.origin.y + workArea.height - sy) : stackH
+            resultFrames[5 + i] = CGRect(x: floor(col2X), y: floor(sy), width: floor(col2W), height: floor(thisH))
         }
 
         return resultFrames
@@ -1226,6 +1446,7 @@ class WindowManager {
         reloadLockedWindowIDs()
         reloadFloatingWindowIDs()
         reloadMasterWindowID()
+        reloadSecondaryFocusWindowID()
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let cgWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
@@ -1247,6 +1468,10 @@ class WindowManager {
         if let mid = masterWindowID, !allIDs.contains(mid) {
             masterWindowID = nil
             persistMasterWindowID()
+        }
+        if let sid = secondaryFocusWindowID, !allIDs.contains(sid) {
+            secondaryFocusWindowID = nil
+            persistSecondaryFocusWindowID()
         }
 
         var onScreenMap: [CGWindowID: (order: Int, owner: String, title: String, bounds: CGRect)] = [:]

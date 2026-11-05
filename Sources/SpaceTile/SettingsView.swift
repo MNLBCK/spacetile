@@ -155,8 +155,11 @@ struct AnimatedTileVisualizer: View {
 struct LiveGridView: View {
     let windows: [ManagedWindow]
     let masterWindowID: CGWindowID?
+    let secondaryFocusWindowID: CGWindowID?
     let onSetMasterAndRearrange: (CGWindowID, String) -> Void
     let onClearMaster: () -> Void
+    let onSetSecondaryFocus: (CGWindowID) -> Void
+    let onClearSecondaryFocus: () -> Void
     let onToggleLock: (CGWindowID) -> Void
     let onToggleFloat: (CGWindowID) -> Void
     let onSwapWindows: (CGWindowID, CGWindowID) -> Void
@@ -283,7 +286,7 @@ struct LiveGridView: View {
         }
     }
 
-    private func windowBoxHeader(win: ManagedWindow, isMaster: Bool, isDropTarget: Bool) -> some View {
+    private func windowBoxHeader(win: ManagedWindow, isMaster: Bool, isSecondaryFocus: Bool, isDropTarget: Bool) -> some View {
         HStack(spacing: 3) {
             Circle().fill(Color.red.opacity(0.85)).frame(width: 5, height: 5)
             Circle().fill(Color.orange.opacity(0.85)).frame(width: 5, height: 5)
@@ -317,6 +320,13 @@ struct LiveGridView: View {
                     .background(Color.cyan.opacity(0.35))
                     .foregroundColor(.cyan)
                     .cornerRadius(2)
+            } else if isSecondaryFocus {
+                Text("◈ FOCUS")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 3).padding(.vertical, 1)
+                    .background(Color.blue.opacity(0.35))
+                    .foregroundColor(.cyan)
+                    .cornerRadius(2)
             }
         }
     }
@@ -338,6 +348,7 @@ struct LiveGridView: View {
         let boxH = relH * canvasH
 
         let isMaster = (masterWindowID != nil && win.id == masterWindowID)
+        let isSecondaryFocus = (secondaryFocusWindowID != nil && win.id == secondaryFocusWindowID)
         let isBeingDragged = (draggedWindowID == win.id)
         let isDropTarget = (hoveredDropTargetID == win.id)
 
@@ -347,6 +358,7 @@ struct LiveGridView: View {
             if win.isFloating { return Color.purple.opacity(0.85) }
             if win.isLocked { return Color.orange.opacity(0.85) }
             if isMaster { return Color.cyan.opacity(0.85) }
+            if isSecondaryFocus { return Color.blue.opacity(0.85) }
             return Color.primary.opacity(0.25)
         }()
 
@@ -355,6 +367,7 @@ struct LiveGridView: View {
             if isBeingDragged { return Color.cyan.opacity(0.40) }
             if win.isFloating { return Color.purple.opacity(0.30) }
             if isMaster { return Color.cyan.opacity(0.32) }
+            if isSecondaryFocus { return Color.blue.opacity(0.28) }
             return Color(NSColor.controlAccentColor).opacity(0.20)
         }()
 
@@ -362,7 +375,7 @@ struct LiveGridView: View {
         let curY = isBeingDragged ? (boxY + dragTranslation.height) : boxY
 
         return VStack(alignment: .leading, spacing: 2) {
-            windowBoxHeader(win: win, isMaster: isMaster, isDropTarget: isDropTarget)
+            windowBoxHeader(win: win, isMaster: isMaster, isSecondaryFocus: isSecondaryFocus, isDropTarget: isDropTarget)
 
             if boxH > 35 && !win.title.isEmpty {
                 Text(win.title)
@@ -375,7 +388,7 @@ struct LiveGridView: View {
         .padding(4)
         .frame(width: boxW, height: boxH)
         .background(bgColor)
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: (isDropTarget || isMaster) ? 2.0 : 1.0))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: (isDropTarget || isMaster || isSecondaryFocus) ? 2.0 : 1.0))
         .cornerRadius(4)
         .shadow(color: isBeingDragged ? Color.black.opacity(0.45) : Color.clear, radius: 8, x: 0, y: 4)
         .scaleEffect(isBeingDragged ? 1.04 : (isDropTarget ? 1.02 : 1.0))
@@ -396,6 +409,15 @@ struct LiveGridView: View {
             } else if !win.isLocked && !win.isFloating {
                 Button("Set as Master Window") {
                     onSetMasterAndRearrange(win.id, win.appName)
+                }
+            }
+            if isSecondaryFocus {
+                Button("Fokus aufheben") {
+                    onClearSecondaryFocus()
+                }
+            } else if !win.isLocked && !win.isFloating && !isMaster {
+                Button("Als zweites Fokus-Fenster setzen") {
+                    onSetSecondaryFocus(win.id)
                 }
             }
             if !win.isFloating {
@@ -459,6 +481,7 @@ struct SettingsView: View {
     @State private var statusMessage: String?
     @State private var currentWindows: [ManagedWindow] = []
     @State private var currentMasterID: CGWindowID? = WindowManager.shared.masterWindowID
+    @State private var currentSecondaryFocusID: CGWindowID? = WindowManager.shared.secondaryFocusWindowID
     @State private var selectedTab: Int
     @State private var recordingField: String? = nil
     @State private var showFeedbackSheet: Bool = false
@@ -725,6 +748,11 @@ struct SettingsView: View {
                 refreshData()
             }
         }
+        .onReceive(DistributedNotificationCenter.default().publisher(for: NSNotification.Name("com.guppi.spacetile.secondaryFocusChanged"))) { _ in
+            DispatchQueue.main.async {
+                refreshData()
+            }
+        }
         .onReceive(DistributedNotificationCenter.default().publisher(for: NSNotification.Name("com.guppi.spacetile.windowsRearranged"))) { _ in
             DispatchQueue.main.async {
                 refreshData()
@@ -763,11 +791,18 @@ struct SettingsView: View {
             LiveGridView(
                 windows: currentWindows,
                 masterWindowID: currentMasterID,
+                secondaryFocusWindowID: currentSecondaryFocusID,
                 onSetMasterAndRearrange: { winID, appName in
                     promoteToMaster(id: winID, appName: appName)
                 },
                 onClearMaster: {
                     clearMaster()
+                },
+                onSetSecondaryFocus: { winID in
+                    setSecondaryFocus(id: winID)
+                },
+                onClearSecondaryFocus: {
+                    clearSecondaryFocus()
                 },
                 onToggleLock: { winID in
                     let isLocked = WindowManager.shared.lockedWindowIDs.contains(winID)
@@ -829,7 +864,7 @@ struct SettingsView: View {
                     Text("Aktionen")
                         .font(.caption2.bold())
                         .foregroundColor(.secondary)
-                        .frame(width: 215, alignment: .trailing)
+                        .frame(width: 270, alignment: .trailing)
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 2)
@@ -850,6 +885,7 @@ struct SettingsView: View {
 
     private func activeWindowRow(index: Int, win: ManagedWindow) -> some View {
         let isMaster = (currentMasterID != nil && win.id == currentMasterID)
+        let isSecondaryFocus = (currentSecondaryFocusID != nil && win.id == currentSecondaryFocusID)
         return HStack(spacing: 8) {
             // 1. App Name (fixed 125px)
             Text(win.appName)
@@ -879,6 +915,13 @@ struct SettingsView: View {
                         .foregroundColor(.green)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.green.opacity(0.18))
+                        .cornerRadius(4)
+                } else if isSecondaryFocus {
+                    Text("◈ Focus")
+                        .font(.caption2.bold())
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.cyan.opacity(0.18))
                         .cornerRadius(4)
                 } else {
                     Text("Tiled")
@@ -932,8 +975,8 @@ struct SettingsView: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            // 5. Action Buttons (fixed 215px, aligned columns)
-            HStack(spacing: 6) {
+            // 5. Action Buttons (fixed 270px, aligned columns)
+            HStack(spacing: 5) {
                 Button(win.isFloating ? "Unfloat" : "Float") {
                     WindowManager.shared.setWindowFloating(id: win.id, floating: !win.isFloating)
                     refreshData()
@@ -941,7 +984,7 @@ struct SettingsView: View {
                 .buttonStyle(.bordered)
                 .tint(win.isFloating ? .purple : .primary)
                 .controlSize(.small)
-                .frame(width: 65)
+                .frame(width: 58)
 
                 if !win.isFloating {
                     Button(win.isLocked ? "Unlock" : "Lock") {
@@ -950,18 +993,18 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .frame(width: 65)
+                    .frame(width: 58)
                 } else {
-                    Spacer().frame(width: 65)
+                    Spacer().frame(width: 58)
                 }
 
                 if isMaster {
                     Button(action: {
                         clearMaster()
                     }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 11, weight: .heavy))
+                                .font(.system(size: 10, weight: .heavy))
                             Text("Master")
                                 .font(.caption2.bold())
                         }
@@ -969,7 +1012,7 @@ struct SettingsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
                     .controlSize(.small)
-                    .frame(width: 78)
+                    .frame(width: 74)
                     .help("Klicken, um Master-Status aufzuheben (Darstellung ohne Master)")
                 } else if !win.isLocked && !win.isFloating {
                     Button("Set Master") {
@@ -978,16 +1021,37 @@ struct SettingsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.cyan)
                     .controlSize(.small)
-                    .frame(width: 78)
+                    .frame(width: 74)
                 } else {
-                    Spacer().frame(width: 78)
+                    Spacer().frame(width: 74)
+                }
+
+                if isSecondaryFocus {
+                    Button("Unfocus") {
+                        clearSecondaryFocus()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.cyan)
+                    .controlSize(.small)
+                    .frame(width: 64)
+                    .help("Fokus aufheben")
+                } else if !win.isLocked && !win.isFloating && !isMaster {
+                    Button("Focus") {
+                        setSecondaryFocus(id: win.id)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .frame(width: 64)
+                    .help("Als zweites Fokus-Fenster setzen")
+                } else {
+                    Spacer().frame(width: 64)
                 }
             }
-            .frame(width: 215, alignment: .trailing)
+            .frame(width: 270, alignment: .trailing)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.secondary.opacity(isMaster ? 0.12 : 0.05))
+        .background(Color.secondary.opacity(isMaster ? 0.12 : (isSecondaryFocus ? 0.08 : 0.05)))
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
@@ -1189,6 +1253,49 @@ struct SettingsView: View {
                                 .font(.subheadline.bold())
                         }
                     }
+                }
+                .padding(8)
+            }
+
+            GroupBox(label: Label("Menüleiste & Dual-Focus", systemImage: "menubar.rectangle")) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 16) {
+                        Text("Logo-Doppelklick:")
+                            .fontWeight(.medium)
+                            .frame(width: 170, alignment: .leading)
+
+                        Picker("", selection: $config.menuBarDoubleClickAction) {
+                            Text("Fenster anordnen (Rearrange)").tag("rearrange")
+                            Text("Einstellungen öffnen (Settings)").tag("settings")
+                            Text("Fokussiertes Fenster als Master").tag("master")
+                            Text("Master aufheben (Gleichmäßig)").tag("uniform")
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 320)
+                    }
+
+                    HStack(spacing: 16) {
+                        Text("Logo-Einfachklick:")
+                            .fontWeight(.medium)
+                            .frame(width: 170, alignment: .leading)
+
+                        Picker("", selection: $config.menuBarSingleClickAction) {
+                            Text("Menü öffnen (Standard)").tag("menu")
+                            Text("Einstellungen öffnen").tag("settings")
+                            Text("Fenster anordnen").tag("rearrange")
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 320)
+                    }
+
+                    Divider()
+
+                    Toggle("Dual-Focus (Zweites Fenster als Fokus hervorheben)", isOn: $config.enableDualFocus)
+                        .font(.subheadline.bold())
+
+                    Text("Gibt neben dem Master-Fenster einem zweiten Hauptfenster (z. B. Browser oder Editor) maximalen Raum, sodass diese beiden die größten Fenster sind und 100% der Displayfläche ohne Lücken ausfüllen.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 .padding(8)
             }
@@ -2034,14 +2141,38 @@ struct SettingsView: View {
     func refreshData() {
         checkStatus()
         WindowManager.shared.reloadMasterWindowID()
+        WindowManager.shared.reloadSecondaryFocusWindowID()
         WindowManager.shared.reloadLockedWindowIDs()
         WindowManager.shared.reloadFloatingWindowIDs()
         currentMasterID = WindowManager.shared.masterWindowID
+        currentSecondaryFocusID = WindowManager.shared.secondaryFocusWindowID
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let vf = screen.visibleFrame
         let primaryH = NSScreen.screens.first?.frame.height ?? vf.height
         let axRect = CGRect(x: vf.origin.x, y: primaryH - (vf.origin.y + vf.height), width: vf.width, height: vf.height)
         currentWindows = WindowManager.shared.collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps), config: config)
+    }
+
+    func setSecondaryFocus(id: CGWindowID) {
+        currentSecondaryFocusID = id
+        showStatus("Set window as Secondary Focus...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            WindowManager.shared.setSecondaryFocusWindow(id: id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                self.refreshData()
+            }
+        }
+    }
+
+    func clearSecondaryFocus() {
+        currentSecondaryFocusID = nil
+        showStatus("Secondary Focus aufgehoben...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            WindowManager.shared.clearSecondaryFocusWindow()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                self.refreshData()
+            }
+        }
     }
 
     func triggerOptimizeNow() {

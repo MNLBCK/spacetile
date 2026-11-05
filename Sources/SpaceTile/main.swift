@@ -44,6 +44,12 @@ case "master":
 case "clear-master", "reset-master":
     WindowManager.shared.clearMasterWindow()
 
+case "focus":
+    _ = WindowManager.shared.setFocusedAsSecondaryFocus()
+
+case "clear-focus", "reset-focus":
+    WindowManager.shared.clearSecondaryFocusWindow()
+
 case "lock":
     _ = WindowManager.shared.toggleLockForFocusedWindow()
 

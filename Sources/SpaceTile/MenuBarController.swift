@@ -13,9 +13,11 @@ class MenuBarController: NSObject, NSMenuDelegate {
         if let button = item.button {
             button.image = makeMenuBarIcon()
             button.imagePosition = .imageOnly
-            button.toolTip = "SpaceTile – Intelligent Window Tiling"
+            button.toolTip = "SpaceTile – Intelligent Window Tiling (Klick: Menü, Doppelklick: Anordnen/Settings)"
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        item.menu = menu
         menu.delegate = self
         self.statusItem = item
         buildMenu()
@@ -69,6 +71,68 @@ class MenuBarController: NSObject, NSMenuDelegate {
         return img
     }
 
+    // MARK: - Click & Double-Click Dispatcher
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else {
+            showMenu()
+            return
+        }
+
+        // 1. Right Click -> Always opens the menu immediately
+        if event.type == .rightMouseUp {
+            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(handlePendingSingleClick), object: nil)
+            showMenu()
+            return
+        }
+
+        // 2. Left Click Handling
+        if event.clickCount == 2 {
+            // Cancel pending single-click action
+            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(handlePendingSingleClick), object: nil)
+            handleDoubleClick()
+        } else if event.clickCount == 1 {
+            let config = Config.load()
+            if config.menuBarSingleClickAction != "menu" && config.menuBarDoubleClickAction == config.menuBarSingleClickAction {
+                executeAction(named: config.menuBarSingleClickAction)
+            } else {
+                // Wait briefly (0.22s) so a rapid second click can be caught as double-click
+                perform(#selector(handlePendingSingleClick), with: nil, afterDelay: 0.22)
+            }
+        }
+    }
+
+    @objc private func handlePendingSingleClick() {
+        let config = Config.load()
+        executeAction(named: config.menuBarSingleClickAction)
+    }
+
+    private func handleDoubleClick() {
+        let config = Config.load()
+        executeAction(named: config.menuBarDoubleClickAction)
+    }
+
+    private func executeAction(named actionName: String) {
+        switch actionName.lowercased() {
+        case "settings", "gui":
+            openGUIAction()
+        case "rearrange", "optimize":
+            rearrangeAction()
+        case "master":
+            setMasterAction()
+        case "uniform", "clear-master":
+            clearMasterAction()
+        case "menu":
+            showMenu()
+        default:
+            rearrangeAction()
+        }
+    }
+
+    private func showMenu() {
+        buildMenu()
+        statusItem?.popUpMenu(menu)
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
         buildMenu()
     }
@@ -120,7 +184,7 @@ class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(floatItem)
 
         if WindowManager.shared.masterWindowID != nil {
-            let clearMasterItem = NSMenuItem(title: "Reset to Automatic Scoring", action: #selector(clearMasterAction), keyEquivalent: "")
+            let clearMasterItem = NSMenuItem(title: "Reset Master (Uniform Grid)", action: #selector(clearMasterAction), keyEquivalent: "")
             clearMasterItem.target = self
             menu.addItem(clearMasterItem)
         }
@@ -145,9 +209,35 @@ class MenuBarController: NSObject, NSMenuDelegate {
         presetParent.submenu = presetsMenu
         menu.addItem(presetParent)
 
+        // 4. Menu Bar Double-Click Action Submenu
+        let clickMenu = NSMenu()
+        let actRearrange = NSMenuItem(title: "Fenster anordnen (Rearrange)", action: #selector(setDoubleClickRearrange), keyEquivalent: "")
+        actRearrange.target = self
+        actRearrange.state = (config.menuBarDoubleClickAction == "rearrange") ? .on : .off
+        clickMenu.addItem(actRearrange)
+
+        let actSettings = NSMenuItem(title: "Einstellungen öffnen (Settings)", action: #selector(setDoubleClickSettings), keyEquivalent: "")
+        actSettings.target = self
+        actSettings.state = (config.menuBarDoubleClickAction == "settings") ? .on : .off
+        clickMenu.addItem(actSettings)
+
+        let actMaster = NSMenuItem(title: "Fokussiertes Fenster als Master", action: #selector(setDoubleClickMaster), keyEquivalent: "")
+        actMaster.target = self
+        actMaster.state = (config.menuBarDoubleClickAction == "master") ? .on : .off
+        clickMenu.addItem(actMaster)
+
+        let actUniform = NSMenuItem(title: "Master aufheben (Gleichmäßig)", action: #selector(setDoubleClickUniform), keyEquivalent: "")
+        actUniform.target = self
+        actUniform.state = (config.menuBarDoubleClickAction == "uniform") ? .on : .off
+        clickMenu.addItem(actUniform)
+
+        let clickParent = NSMenuItem(title: "Logo-Doppelklick Aktion", action: nil, keyEquivalent: "")
+        clickParent.submenu = clickMenu
+        menu.addItem(clickParent)
+
         menu.addItem(NSMenuItem.separator())
 
-        // 4. GUI & System Controls
+        // 5. GUI & System Controls
         let guiItem = NSMenuItem(title: "Open SpaceTile Settings...", action: #selector(openGUIAction), keyEquivalent: "s")
         guiItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
         guiItem.target = self
@@ -162,6 +252,31 @@ class MenuBarController: NSObject, NSMenuDelegate {
         let quitItem = NSMenuItem(title: "Quit SpaceTile", action: #selector(quitAction), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
+    }
+
+    // MARK: - Actions
+    @objc private func setDoubleClickRearrange() {
+        var cfg = Config.load()
+        cfg.menuBarDoubleClickAction = "rearrange"
+        cfg.save()
+    }
+
+    @objc private func setDoubleClickSettings() {
+        var cfg = Config.load()
+        cfg.menuBarDoubleClickAction = "settings"
+        cfg.save()
+    }
+
+    @objc private func setDoubleClickMaster() {
+        var cfg = Config.load()
+        cfg.menuBarDoubleClickAction = "master"
+        cfg.save()
+    }
+
+    @objc private func setDoubleClickUniform() {
+        var cfg = Config.load()
+        cfg.menuBarDoubleClickAction = "uniform"
+        cfg.save()
     }
 
     @objc private func rearrangeAction() {
