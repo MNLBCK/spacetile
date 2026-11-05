@@ -57,16 +57,18 @@ struct AppWeightConfig: Codable, Identifiable, Equatable {
 }
 
 struct Config: Codable, Equatable {
-    static let version = "1.5.9"
+    static let version = "1.6.0"
     static let repoURL = "https://github.com/MNLBCK/spacetile"
     static let issuesURL = "https://github.com/MNLBCK/spacetile/issues/new"
 
     // Shortcuts
-    var shortcut: ShortcutConfig       // Rearrange (Hyper+Space)
-    var masterShortcut: ShortcutConfig // Set Master (Hyper+Return)
-    var lockShortcut: ShortcutConfig   // Lock Window (Hyper+L)
-    var floatShortcut: ShortcutConfig  // Float Window Always on Top (Hyper+F)
-    var guiShortcut: ShortcutConfig    // Settings (Hyper+S)
+    var shortcut: ShortcutConfig          // Rearrange (Hyper+Space)
+    var addMainShortcut: ShortcutConfig   // Add to Main (Hyper++)
+    var removeMainShortcut: ShortcutConfig // Remove from Main (Hyper+-)
+    var masterShortcut: ShortcutConfig    // Toggle Main (Hyper+Return)
+    var lockShortcut: ShortcutConfig      // Lock Window (Hyper+L)
+    var floatShortcut: ShortcutConfig     // Float Window Always on Top (Hyper+F)
+    var guiShortcut: ShortcutConfig       // Settings (Hyper+S)
 
     // Menu Bar Quick Action (Left/Short Click: "rearrange", "actions", "settings", "master", "uniform", "menu")
     var menuBarQuickAction: String
@@ -93,6 +95,8 @@ struct Config: Codable, Equatable {
 
     init(
         shortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "space"),
+        addMainShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "+"),
+        removeMainShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "-"),
         masterShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "return"),
         lockShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "l"),
         floatShortcut: ShortcutConfig = ShortcutConfig(modifiers: ["hyper"], key: "f"),
@@ -113,6 +117,8 @@ struct Config: Codable, Equatable {
         ignoredApps: [String]? = nil
     ) {
         self.shortcut = shortcut
+        self.addMainShortcut = addMainShortcut
+        self.removeMainShortcut = removeMainShortcut
         self.masterShortcut = masterShortcut
         self.lockShortcut = lockShortcut
         self.floatShortcut = floatShortcut
@@ -160,7 +166,7 @@ struct Config: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case shortcut, masterShortcut, lockShortcut, floatShortcut, guiShortcut
+        case shortcut, addMainShortcut, removeMainShortcut, masterShortcut, lockShortcut, floatShortcut, guiShortcut
         case menuBarQuickAction, menuBarDoubleClickAction, menuBarSingleClickAction
         case gap, margin, singleWindowMode, enableDualFocus
         case animationMode, animationDuration, animationSteps, freezeContentDuringResize
@@ -172,6 +178,8 @@ struct Config: Codable, Equatable {
         let def = Config.default
 
         shortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .shortcut) ?? def.shortcut
+        addMainShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .addMainShortcut) ?? def.addMainShortcut
+        removeMainShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .removeMainShortcut) ?? def.removeMainShortcut
         masterShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .masterShortcut) ?? def.masterShortcut
         lockShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .lockShortcut) ?? def.lockShortcut
         floatShortcut = try container.decodeIfPresent(ShortcutConfig.self, forKey: .floatShortcut) ?? def.floatShortcut
@@ -210,6 +218,8 @@ struct Config: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(shortcut, forKey: .shortcut)
+        try container.encode(addMainShortcut, forKey: .addMainShortcut)
+        try container.encode(removeMainShortcut, forKey: .removeMainShortcut)
         try container.encode(masterShortcut, forKey: .masterShortcut)
         try container.encode(lockShortcut, forKey: .lockShortcut)
         try container.encode(floatShortcut, forKey: .floatShortcut)

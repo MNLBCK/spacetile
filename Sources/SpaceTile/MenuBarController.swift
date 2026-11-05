@@ -109,29 +109,31 @@ class MenuBarController: NSObject, NSMenuDelegate {
                 masterPath.stroke()
             }
 
-            // Right: Auxiliary Stack Tiles (Frosted Slate)
-            let trRect = NSRect(x: 12.3, y: 9.4, width: 7.1, height: 4.0)
+            // Right: Auxiliary Stack Tiles (Frosted Slate - Clearly Visible)
+            let trRect = NSRect(x: 12.2, y: 9.7, width: 7.2, height: 3.7)
             let trPath = NSBezierPath(roundedRect: trRect, xRadius: 0.8, yRadius: 0.8)
 
-            let brRect = NSRect(x: 12.3, y: 5.0, width: 7.1, height: 4.0)
+            let brRect = NSRect(x: 12.2, y: 5.0, width: 7.2, height: 3.7)
             let brPath = NSBezierPath(roundedRect: brRect, xRadius: 0.8, yRadius: 0.8)
 
             if active {
-                NSColor(red: 0.22, green: 0.22, blue: 0.25, alpha: 1.0).setFill()
+                // High contrast frosted slate blue/gray
+                NSColor(red: 0.44, green: 0.47, blue: 0.56, alpha: 1.0).setFill()
                 trPath.fill()
                 brPath.fill()
 
-                NSColor(white: 0.55, alpha: 0.25).setStroke()
-                trPath.lineWidth = 0.5
+                // Crisp, clearly defined light border
+                NSColor(white: 0.92, alpha: 0.85).setStroke()
+                trPath.lineWidth = 0.7
                 trPath.stroke()
-                brPath.lineWidth = 0.5
+                brPath.lineWidth = 0.7
                 brPath.stroke()
             } else {
-                NSColor(white: 0.25, alpha: 0.30).setFill()
+                NSColor(white: 0.30, alpha: 0.35).setFill()
                 trPath.fill()
                 brPath.fill()
 
-                NSColor(white: 0.40, alpha: 0.20).setStroke()
+                NSColor(white: 0.50, alpha: 0.30).setStroke()
                 trPath.lineWidth = 0.5
                 trPath.stroke()
                 brPath.lineWidth = 0.5
@@ -193,10 +195,14 @@ class MenuBarController: NSObject, NSMenuDelegate {
             showQuickActionsMenu()
         case "settings", "gui":
             openGUIAction()
-        case "master":
-            setMasterAction()
-        case "uniform", "clear-master":
-            clearMasterAction()
+        case "add_main", "addmain":
+            addMainAction()
+        case "remove_main", "removemain":
+            removeMainAction()
+        case "toggle_main", "togglemain", "master":
+            toggleMainAction()
+        case "uniform", "clear-master", "clear_main":
+            clearMainAction()
         case "menu":
             showMenu()
         case "rearrange", "optimize":
@@ -223,15 +229,25 @@ class MenuBarController: NSObject, NSMenuDelegate {
         rearrangeItem.target = self
         quickMenu.addItem(rearrangeItem)
 
-        let masterItem = NSMenuItem(title: "Fokussiertes Fenster als Master", action: #selector(setMasterAction), keyEquivalent: "\r")
-        masterItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
-        masterItem.target = self
-        quickMenu.addItem(masterItem)
+        let addMainItem = NSMenuItem(title: "Fenster zu Main hinzufügen (+)", action: #selector(addMainAction), keyEquivalent: "+")
+        addMainItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        addMainItem.target = self
+        quickMenu.addItem(addMainItem)
 
-        if WindowManager.shared.masterWindowID != nil {
-            let clearMasterItem = NSMenuItem(title: "Master aufheben (Gleichmäßig)", action: #selector(clearMasterAction), keyEquivalent: "")
-            clearMasterItem.target = self
-            quickMenu.addItem(clearMasterItem)
+        let removeMainItem = NSMenuItem(title: "Aus Main-Fenstern entfernen (-)", action: #selector(removeMainAction), keyEquivalent: "-")
+        removeMainItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        removeMainItem.target = self
+        quickMenu.addItem(removeMainItem)
+
+        let toggleMainItem = NSMenuItem(title: "Main-Status umschalten", action: #selector(toggleMainAction), keyEquivalent: "\r")
+        toggleMainItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        toggleMainItem.target = self
+        quickMenu.addItem(toggleMainItem)
+
+        if !WindowManager.shared.mainWindowIDs.isEmpty {
+            let clearMainItem = NSMenuItem(title: "Alle Main aufheben (Gleichmäßig)", action: #selector(clearMainAction), keyEquivalent: "")
+            clearMainItem.target = self
+            quickMenu.addItem(clearMainItem)
         }
 
         let floatItem = NSMenuItem(title: "Fenster pinnen (Immer oben float)", action: #selector(toggleFloatAction), keyEquivalent: "f")
@@ -293,10 +309,20 @@ class MenuBarController: NSObject, NSMenuDelegate {
         rearrangeItem.target = self
         menu.addItem(rearrangeItem)
 
-        let masterItem = NSMenuItem(title: "Set Focused Window as Master", action: #selector(setMasterAction), keyEquivalent: "\r")
-        masterItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
-        masterItem.target = self
-        menu.addItem(masterItem)
+        let addMainItem = NSMenuItem(title: "Fenster zu Main hinzufügen (+)", action: #selector(addMainAction), keyEquivalent: "+")
+        addMainItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        addMainItem.target = self
+        menu.addItem(addMainItem)
+
+        let removeMainItem = NSMenuItem(title: "Aus Main-Fenstern entfernen (-)", action: #selector(removeMainAction), keyEquivalent: "-")
+        removeMainItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        removeMainItem.target = self
+        menu.addItem(removeMainItem)
+
+        let toggleMainItem = NSMenuItem(title: "Main-Status umschalten", action: #selector(toggleMainAction), keyEquivalent: "\r")
+        toggleMainItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
+        toggleMainItem.target = self
+        menu.addItem(toggleMainItem)
 
         let lockItem = NSMenuItem(title: "Lock/Unlock Active Window", action: #selector(toggleLockAction), keyEquivalent: "l")
         lockItem.keyEquivalentModifierMask = [.control, .option, .shift, .command]
@@ -308,10 +334,10 @@ class MenuBarController: NSObject, NSMenuDelegate {
         floatItem.target = self
         menu.addItem(floatItem)
 
-        if WindowManager.shared.masterWindowID != nil {
-            let clearMasterItem = NSMenuItem(title: "Reset Master (Uniform Grid)", action: #selector(clearMasterAction), keyEquivalent: "")
-            clearMasterItem.target = self
-            menu.addItem(clearMasterItem)
+        if !WindowManager.shared.mainWindowIDs.isEmpty {
+            let clearMainItem = NSMenuItem(title: "Alle Main aufheben (Gleichmäßig)", action: #selector(clearMainAction), keyEquivalent: "")
+            clearMainItem.target = self
+            menu.addItem(clearMainItem)
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -433,10 +459,32 @@ class MenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    @objc private func setMasterAction() {
+    @objc private func addMainAction() {
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = WindowManager.shared.setFocusedAsMaster()
+            _ = WindowManager.shared.addFocusedToMain()
         }
+    }
+
+    @objc private func removeMainAction() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = WindowManager.shared.removeFocusedFromMain()
+        }
+    }
+
+    @objc private func toggleMainAction() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = WindowManager.shared.toggleFocusedMain()
+        }
+    }
+
+    @objc private func clearMainAction() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            WindowManager.shared.clearMainWindows()
+        }
+    }
+
+    @objc private func setMasterAction() {
+        toggleMainAction()
     }
 
     @objc private func toggleLockAction() {

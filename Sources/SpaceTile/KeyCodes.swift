@@ -64,12 +64,18 @@ struct KeyCodes {
         case "7": return UInt32(kVK_ANSI_7)
         case "8": return UInt32(kVK_ANSI_8)
         case "9": return UInt32(kVK_ANSI_9)
+        // Operators & Symbols
+        case "+", "plus", "add": return UInt32(kVK_ANSI_Equal)
+        case "-", "minus", "sub", "hyphen": return UInt32(kVK_ANSI_Minus)
+        case "=", "equal", "equals": return UInt32(kVK_ANSI_Equal)
         default: return nil
         }
     }
 
     static func name(for keyCode: UInt16) -> String {
         switch Int(keyCode) {
+        case kVK_ANSI_Equal, kVK_ANSI_RightBracket, kVK_ANSI_KeypadPlus: return "+"
+        case kVK_ANSI_Minus, kVK_ANSI_Slash, kVK_ANSI_KeypadMinus: return "-"
         case kVK_Space: return "space"
         case kVK_Return: return "return"
         case kVK_Tab: return "tab"

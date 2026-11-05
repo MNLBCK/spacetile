@@ -19,11 +19,13 @@ class Daemon {
         print("-----------------------------------------------------------------")
         print("\u{001B}[1mSpaceTile Daemon\u{001B}[0m (Running in background)")
         print("Hotkeys:")
-        print(" * Rearrange:      \(config.shortcut.displayString)")
-        print(" * Set as Master:  \(config.masterShortcut.displayString)")
-        print(" * Lock/Unlock:    \(config.lockShortcut.displayString)")
-        print(" * Toggle Float:   \(config.floatShortcut.displayString)")
-        print(" * Settings GUI:   \(config.guiShortcut.displayString)")
+        print(" * Rearrange:        \(config.shortcut.displayString)")
+        print(" * Add to Main:      \(config.addMainShortcut.displayString) (Hyper++)")
+        print(" * Remove from Main: \(config.removeMainShortcut.displayString) (Hyper+-)")
+        print(" * Toggle Main:      \(config.masterShortcut.displayString) (Hyper+Return)")
+        print(" * Lock/Unlock:      \(config.lockShortcut.displayString)")
+        print(" * Toggle Float:     \(config.floatShortcut.displayString)")
+        print(" * Settings GUI:     \(config.guiShortcut.displayString)")
         print("-----------------------------------------------------------------")
 
         HotKeyManager.shared.onRearrangeTriggered = {
@@ -36,9 +38,19 @@ class Daemon {
             SettingsWindowController.shared.show()
         }
 
-        HotKeyManager.shared.onSetMasterTriggered = {
-            print("[\(timeFormatter.string(from: Date()))] Shortcut triggered -> Setting focused window as Master...")
-            _ = WindowManager.shared.setFocusedAsMaster()
+        HotKeyManager.shared.onAddMainTriggered = {
+            print("[\(timeFormatter.string(from: Date()))] Shortcut triggered -> Adding focused window to Main...")
+            _ = WindowManager.shared.addFocusedToMain()
+        }
+
+        HotKeyManager.shared.onRemoveMainTriggered = {
+            print("[\(timeFormatter.string(from: Date()))] Shortcut triggered -> Removing focused window from Main...")
+            _ = WindowManager.shared.removeFocusedFromMain()
+        }
+
+        HotKeyManager.shared.onToggleMainTriggered = {
+            print("[\(timeFormatter.string(from: Date()))] Shortcut triggered -> Toggling Main status for focused window...")
+            _ = WindowManager.shared.toggleFocusedMain()
         }
 
         HotKeyManager.shared.onToggleLockTriggered = {

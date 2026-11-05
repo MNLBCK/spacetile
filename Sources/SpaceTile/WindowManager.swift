@@ -27,8 +27,9 @@ class WindowManager {
     private let stateLock = NSLock()
     private(set) var lockedWindowIDs: Set<CGWindowID> = []
     private(set) var floatingWindowIDs: Set<CGWindowID> = []
-    private(set) var masterWindowID: CGWindowID?
-    private(set) var secondaryFocusWindowID: CGWindowID?
+    private(set) var mainWindowIDs: [CGWindowID] = []
+    var masterWindowID: CGWindowID? { mainWindowIDs.first }
+    var secondaryFocusWindowID: CGWindowID? { mainWindowIDs.count > 1 ? mainWindowIDs[1] : nil }
     private(set) var windowScoreOverrides: [CGWindowID: Int] = [:]
     private var lastRunTime: Date?
     private var lastMasterShortcutTimestamp: TimeInterval = 0
@@ -58,19 +59,19 @@ class WindowManager {
         setWindowFrameImmediate(elemA, target: frameB)
         setWindowFrameImmediate(elemB, target: frameA)
 
-        // If one of them was master, update masterWindowID
-        if masterWindowID == idA {
-            setMasterWindow(id: idB)
-        } else if masterWindowID == idB {
-            setMasterWindow(id: idA)
+        // If one of them was in mainWindowIDs, exchange them
+        stateLock.lock()
+        if let idxA = mainWindowIDs.firstIndex(of: idA) {
+            if let idxB = mainWindowIDs.firstIndex(of: idB) {
+                mainWindowIDs.swapAt(idxA, idxB)
+            } else {
+                mainWindowIDs[idxA] = idB
+            }
+        } else if let idxB = mainWindowIDs.firstIndex(of: idB) {
+            mainWindowIDs[idxB] = idA
         }
-
-        // If one of them was secondary focus, update secondaryFocusWindowID
-        if secondaryFocusWindowID == idA {
-            setSecondaryFocusWindow(id: idB)
-        } else if secondaryFocusWindowID == idB {
-            setSecondaryFocusWindow(id: idA)
-        }
+        stateLock.unlock()
+        persistMainWindowIDs()
 
         DistributedNotificationCenter.default().postNotificationName(
             NSNotification.Name("com.guppi.spacetile.windowsRearranged"),
@@ -90,6 +91,11 @@ class WindowManager {
         return home.appendingPathComponent(".config/spacetile/floating_windows.json")
     }
 
+    static var mainWindowsStoreURL: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".config/spacetile/main_windows.json")
+    }
+
     static var masterStoreURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".config/spacetile/master_window.json")
@@ -103,36 +109,53 @@ class WindowManager {
     init() {
         reloadLockedWindowIDs()
         reloadFloatingWindowIDs()
-        reloadMasterWindowID()
-        reloadSecondaryFocusWindowID()
+        reloadMainWindowIDs()
     }
 
-    func reloadMasterWindowID() {
+    func reloadMainWindowIDs() {
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard FileManager.default.fileExists(atPath: WindowManager.masterStoreURL.path),
-              let data = try? Data(contentsOf: WindowManager.masterStoreURL),
-              let id = try? JSONDecoder().decode(UInt32.self, from: data) else {
-            self.masterWindowID = nil
+
+        if FileManager.default.fileExists(atPath: WindowManager.mainWindowsStoreURL.path),
+           let data = try? Data(contentsOf: WindowManager.mainWindowsStoreURL),
+           let ids = try? JSONDecoder().decode([UInt32].self, from: data) {
+            self.mainWindowIDs = ids.map { CGWindowID($0) }
             return
         }
-        self.masterWindowID = CGWindowID(id)
+
+        // Backwards compatibility migration from legacy masterStoreURL
+        if FileManager.default.fileExists(atPath: WindowManager.masterStoreURL.path),
+           let data = try? Data(contentsOf: WindowManager.masterStoreURL),
+           let id = try? JSONDecoder().decode(UInt32.self, from: data) {
+            self.mainWindowIDs = [CGWindowID(id)]
+            return
+        }
+
+        self.mainWindowIDs = []
     }
 
-    func persistMasterWindowID() {
+    func persistMainWindowIDs() {
         stateLock.lock()
-        let currentID = masterWindowID
+        let currentIDs = mainWindowIDs
         stateLock.unlock()
 
-        let url = WindowManager.masterStoreURL
+        let url = WindowManager.mainWindowsStoreURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let id = currentID {
-            if let data = try? JSONEncoder().encode(UInt32(id)) {
+        if !currentIDs.isEmpty {
+            let uids = currentIDs.map { UInt32($0) }
+            if let data = try? JSONEncoder().encode(uids) {
                 try? data.write(to: url, options: .atomic)
             }
         } else {
             try? FileManager.default.removeItem(at: url)
         }
+
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.guppi.spacetile.mainWindowsChanged"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
         DistributedNotificationCenter.default().postNotificationName(
             NSNotification.Name("com.guppi.spacetile.masterChanged"),
             object: nil,
@@ -141,91 +164,144 @@ class WindowManager {
         )
     }
 
+    func reloadMasterWindowID() {
+        reloadMainWindowIDs()
+    }
+
+    func persistMasterWindowID() {
+        persistMainWindowIDs()
+    }
+
     func reloadSecondaryFocusWindowID() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard FileManager.default.fileExists(atPath: WindowManager.secondaryFocusStoreURL.path),
-              let data = try? Data(contentsOf: WindowManager.secondaryFocusStoreURL),
-              let id = try? JSONDecoder().decode(UInt32.self, from: data) else {
-            self.secondaryFocusWindowID = nil
-            return
-        }
-        self.secondaryFocusWindowID = CGWindowID(id)
+        reloadMainWindowIDs()
     }
 
     func persistSecondaryFocusWindowID() {
-        stateLock.lock()
-        let currentID = secondaryFocusWindowID
-        stateLock.unlock()
+        persistMainWindowIDs()
+    }
 
-        let url = WindowManager.secondaryFocusStoreURL
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let id = currentID {
-            if let data = try? JSONEncoder().encode(UInt32(id)) {
-                try? data.write(to: url, options: .atomic)
-            }
-        } else {
-            try? FileManager.default.removeItem(at: url)
+    func isMainWindow(id: CGWindowID) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return mainWindowIDs.contains(id)
+    }
+
+    func addMainWindow(id: CGWindowID) {
+        stateLock.lock()
+        if !mainWindowIDs.contains(id) {
+            mainWindowIDs.append(id)
         }
-        DistributedNotificationCenter.default().postNotificationName(
-            NSNotification.Name("com.guppi.spacetile.secondaryFocusChanged"),
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
+        stateLock.unlock()
+        persistMainWindowIDs()
+        _ = optimize(verbose: true)
+    }
+
+    func removeMainWindow(id: CGWindowID) {
+        stateLock.lock()
+        mainWindowIDs.removeAll(where: { $0 == id })
+        stateLock.unlock()
+        persistMainWindowIDs()
+        _ = optimize(verbose: true)
+    }
+
+    @discardableResult
+    func toggleMainWindow(id: CGWindowID) -> Bool {
+        stateLock.lock()
+        let isPresent = mainWindowIDs.contains(id)
+        if isPresent {
+            mainWindowIDs.removeAll(where: { $0 == id })
+        } else {
+            mainWindowIDs.append(id)
+        }
+        stateLock.unlock()
+        persistMainWindowIDs()
+        _ = optimize(verbose: true)
+        return !isPresent
+    }
+
+    func clearMainWindows() {
+        stateLock.lock()
+        mainWindowIDs.removeAll()
+        stateLock.unlock()
+        persistMainWindowIDs()
+        _ = optimize(verbose: true)
+    }
+
+    func getFocusedWindowID() -> CGWindowID? {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
+        if front.processIdentifier == ProcessInfo.processInfo.processIdentifier || front.localizedName == "SpaceTile" {
+            return nil
+        }
+        let appRef = AXUIElementCreateApplication(front.processIdentifier)
+        var winRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+              let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() else { return nil }
+
+        var winID: CGWindowID = 0
+        guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return nil }
+        return winID
+    }
+
+    func addFocusedToMain() -> Bool {
+        guard let winID = getFocusedWindowID() else { return false }
+        addMainWindow(id: winID)
+        return true
+    }
+
+    func removeFocusedFromMain() -> Bool {
+        guard let winID = getFocusedWindowID() else { return false }
+        removeMainWindow(id: winID)
+        return true
+    }
+
+    func toggleFocusedMain() -> Bool {
+        guard let winID = getFocusedWindowID() else { return false }
+        return toggleMainWindow(id: winID)
+    }
+
+    func setMasterWindow(id: CGWindowID) {
+        stateLock.lock()
+        mainWindowIDs.removeAll(where: { $0 == id })
+        mainWindowIDs.insert(id, at: 0)
+        stateLock.unlock()
+        persistMainWindowIDs()
+        _ = optimize(verbose: true, forcedMasterID: id)
+    }
+
+    func clearMasterWindow() {
+        clearMainWindows()
     }
 
     func setSecondaryFocusWindow(id: CGWindowID) {
         stateLock.lock()
-        if self.secondaryFocusWindowID == id {
-            self.secondaryFocusWindowID = nil
+        if mainWindowIDs.contains(id) {
+            mainWindowIDs.removeAll(where: { $0 == id })
         } else {
-            self.secondaryFocusWindowID = id
+            if mainWindowIDs.count >= 2 {
+                mainWindowIDs.insert(id, at: 1)
+            } else {
+                mainWindowIDs.append(id)
+            }
         }
         stateLock.unlock()
-        persistSecondaryFocusWindowID()
+        persistMainWindowIDs()
         _ = optimize(verbose: true)
     }
 
     func clearSecondaryFocusWindow() {
         stateLock.lock()
-        self.secondaryFocusWindowID = nil
+        if mainWindowIDs.count > 1 {
+            mainWindowIDs.remove(at: 1)
+        }
         stateLock.unlock()
-        persistSecondaryFocusWindowID()
+        persistMainWindowIDs()
         _ = optimize(verbose: true)
     }
 
     func setFocusedAsSecondaryFocus() -> Bool {
-        guard let front = NSWorkspace.shared.frontmostApplication else { return false }
-        if front.processIdentifier == ProcessInfo.processInfo.processIdentifier || front.localizedName == "SpaceTile" {
-            return false
-        }
-        let appRef = AXUIElementCreateApplication(front.processIdentifier)
-        var winRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
-              let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() else { return false }
-
-        var winID: CGWindowID = 0
-        guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return false }
-
+        guard let winID = getFocusedWindowID() else { return false }
         setSecondaryFocusWindow(id: winID)
         return true
-    }
-
-    func setMasterWindow(id: CGWindowID) {
-        stateLock.lock()
-        self.masterWindowID = id
-        stateLock.unlock()
-        persistMasterWindowID()
-        _ = optimize(verbose: true, forcedMasterID: id)
-    }
-
-    func clearMasterWindow() {
-        stateLock.lock()
-        self.masterWindowID = nil
-        stateLock.unlock()
-        persistMasterWindowID()
-        _ = optimize(verbose: true)
     }
 
     func reloadLockedWindowIDs() {
@@ -466,25 +542,12 @@ class WindowManager {
 
         if interval < doubleTapThreshold {
             lastMasterShortcutTimestamp = 0
-            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Double-tap Hyper+Return -> Master deaktiviert (Gleichmäßiges Raster ohne Master).")
-            clearMasterWindow()
+            print("[\u{001B}[32mSpaceTile\u{001B}[0m] Double-tap Hyper+Return -> Alle Main-Fenster aufgehoben (Gleichmäßiges Raster).")
+            clearMainWindows()
             return true
         }
 
-        guard let front = NSWorkspace.shared.frontmostApplication else { return false }
-        if front.processIdentifier == ProcessInfo.processInfo.processIdentifier || front.localizedName == "SpaceTile" {
-            return false
-        }
-        let appRef = AXUIElementCreateApplication(front.processIdentifier)
-        var winRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
-              let win = winRef, CFGetTypeID(win) == AXUIElementGetTypeID() else { return false }
-
-        var winID: CGWindowID = 0
-        guard _AXUIElementGetWindow(win as! AXUIElement, &winID) == .success else { return false }
-
-        setMasterWindow(id: winID)
-        return true
+        return toggleFocusedMain()
     }
 
     @discardableResult
@@ -496,8 +559,7 @@ class WindowManager {
 
         reloadLockedWindowIDs()
         reloadFloatingWindowIDs()
-        reloadMasterWindowID()
-        reloadSecondaryFocusWindowID()
+        reloadMainWindowIDs()
         let config = Config.load()
 
         guard let targetScreen = findTargetScreen() else {
@@ -542,42 +604,45 @@ class WindowManager {
         }
 
         // Handle forced master or active master on tiling windows
-        let effectiveMasterID = forcedMasterID ?? masterWindowID
-        if let fid = effectiveMasterID, let idx = tilingWindows.firstIndex(where: { $0.id == fid }) {
-            let chosen = tilingWindows.remove(at: idx)
-            tilingWindows.insert(chosen, at: 0)
-            if masterWindowID != fid {
-                masterWindowID = fid
-                persistMasterWindowID()
+        if let fid = forcedMasterID {
+            stateLock.lock()
+            if !mainWindowIDs.contains(fid) {
+                mainWindowIDs.insert(fid, at: 0)
+            } else if let idx = mainWindowIDs.firstIndex(of: fid), idx != 0 {
+                mainWindowIDs.remove(at: idx)
+                mainWindowIDs.insert(fid, at: 0)
             }
+            stateLock.unlock()
+            persistMainWindowIDs()
         }
 
-        // Handle Secondary Focus (Focus 2) when Dual-Focus is active and count >= 2
-        if config.enableDualFocus && tilingWindows.count >= 2 {
-            let effectiveSecID: CGWindowID?
-            if let secID = secondaryFocusWindowID, tilingWindows.dropFirst().contains(where: { $0.id == secID }) {
-                effectiveSecID = secID
+        // Partition tiling windows into Main windows vs. Supporting windows
+        let mainIDSet = Set(mainWindowIDs)
+        var mains: [ManagedWindow] = []
+        var supporting: [ManagedWindow] = []
+
+        for win in tilingWindows {
+            if mainIDSet.contains(win.id) {
+                mains.append(win)
             } else {
-                let candidates = Array(tilingWindows.dropFirst())
-                if let browserOrEditor = candidates.first(where: {
-                    let app = $0.appName.lowercased()
-                    return $0.score >= 60 || app.contains("chrome") || app.contains("safari") || app.contains("firefox") || app.contains("arc") || app.contains("browser") || app.contains("code") || app.contains("cursor")
-                }) {
-                    effectiveSecID = browserOrEditor.id
-                } else {
-                    effectiveSecID = candidates.max(by: { $0.score < $1.score })?.id
-                }
-            }
-
-            if let secID = effectiveSecID, let idx = tilingWindows.firstIndex(where: { $0.id == secID }) {
-                let secWin = tilingWindows.remove(at: idx)
-                tilingWindows.insert(secWin, at: 1)
+                supporting.append(win)
             }
         }
 
-        // Apply learned ratio from SpaceMemory if not forced and if a master window is active
+        // Sort mains to match the order in mainWindowIDs (first chosen gets primary spot)
+        mains.sort { (a, b) -> Bool in
+            let idxA = mainWindowIDs.firstIndex(of: a.id) ?? 999
+            let idxB = mainWindowIDs.firstIndex(of: b.id) ?? 999
+            return idxA < idxB
+        }
+
+        // Combine: all Main windows first, followed by Supporting windows
+        tilingWindows = mains + supporting
+        let mainCount = mains.count
+
+        // Apply learned ratio from SpaceMemory if not forced and if main windows are active
         var effectiveRatio = forcedRatio
-        if effectiveRatio == nil && config.enableSpaceLearning && masterWindowID != nil {
+        if effectiveRatio == nil && config.enableSpaceLearning && mainCount > 0 {
             let appNames = Array(Set(tilingWindows.map { $0.appName })).sorted()
             let resKey = "\(Int(targetScreen.frame.width))x\(Int(targetScreen.frame.height))"
             if let profile = SpaceMemory.shared.findProfile(apps: appNames, resolution: resKey),
@@ -595,7 +660,8 @@ class WindowManager {
             workArea: workArea,
             screen: targetScreen,
             config: config,
-            forcedRatio: effectiveRatio
+            forcedRatio: effectiveRatio,
+            mainCount: mainCount
         )
 
         // Apply frames
@@ -635,9 +701,8 @@ class WindowManager {
             let countStr = floatingWindows.isEmpty ? "\(tilingWindows.count)" : "\(tilingWindows.count) tiled (\(floatingWindows.count) floating)"
             print("[\u{001B}[32mSpaceTile\u{001B}[0m] Arranged \(countStr) windows on '\(targetScreen.localizedName)'")
             for (i, win) in tilingWindows.enumerated() {
-                let isMaster = (effectiveMasterID != nil && win.id == effectiveMasterID)
-                let isSecFocus = (config.enableDualFocus && i == 1 && tilingWindows.count >= 2)
-                let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (isMaster ? "\u{001B}[32m★ Master\u{001B}[0m" : (isSecFocus ? "\u{001B}[36m◈ Focus \u{001B}[0m" : "  Tiled "))
+                let isMain = mainWindowIDs.contains(win.id)
+                let tag = win.isLocked ? "\u{001B}[33m🔒 Locked\u{001B}[0m" : (isMain ? "\u{001B}[32m★ Main  \u{001B}[0m" : "  Support")
                 let f = frames[i]
                 print(String(format: " %@[%@ (Score %d)] -> %dx%d @ (%d, %d)",
                              tag, win.appName, win.score, Int(f.width), Int(f.height), Int(f.origin.x), Int(f.origin.y)))
@@ -665,7 +730,8 @@ class WindowManager {
         workArea: CGRect,
         screen: NSScreen,
         config: Config,
-        forcedRatio: Double?
+        forcedRatio: Double?,
+        mainCount: Int
     ) -> [CGRect] {
         let count = windows.count
         guard count > 0 else { return [] }
@@ -686,7 +752,8 @@ class WindowManager {
                 workArea: workArea,
                 screen: screen,
                 config: config,
-                forcedRatio: forcedRatio
+                forcedRatio: forcedRatio,
+                mainCount: mainCount
             )
         }
 
@@ -772,7 +839,8 @@ class WindowManager {
                 workArea: subWorkArea,
                 screen: screen,
                 config: config,
-                forcedRatio: forcedRatio
+                forcedRatio: forcedRatio,
+                mainCount: mainCount
             )
 
             for (i, uIdx) in unlockedIndices.enumerated() {
@@ -859,7 +927,8 @@ class WindowManager {
         workArea: CGRect,
         screen: NSScreen,
         config: Config,
-        forcedRatio: Double?
+        forcedRatio: Double?,
+        mainCount: Int
     ) -> [CGRect] {
         let count = windows.count
         guard count > 0 else { return [] }
@@ -901,7 +970,7 @@ class WindowManager {
 
         // 2 Windows
         if count == 2 {
-            if masterWindowID == nil && forcedRatio == nil {
+            if (mainCount == 0 || mainCount >= 2) && forcedRatio == nil {
                 let halfW = floor((workArea.width - gap) / 2.0)
                 resultFrames[0] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: halfW, height: floor(workArea.height))
                 resultFrames[1] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: halfW, height: floor(workArea.height))
@@ -940,7 +1009,7 @@ class WindowManager {
 
         // 3 Windows
         if count == 3 {
-            if masterWindowID == nil && forcedRatio == nil {
+            if (mainCount == 0 || mainCount >= 3) && forcedRatio == nil {
                 let colW = floor((workArea.width - 2 * gap) / 3.0)
                 for i in 0..<3 {
                     let cx = workArea.origin.x + CGFloat(i) * (colW + gap)
@@ -961,22 +1030,31 @@ class WindowManager {
                 return resultFrames
             }
 
-            // 3 Equal-Width Columns: Focus 2 on Left, Master Centered, Window 2 on Right!
+            // 3 Equal-Width Columns:
             let colW = floor((workArea.width - 2 * gap) / 3.0)
             let col0X = workArea.origin.x
             let col1X = workArea.origin.x + colW + gap
             let col2X = workArea.origin.x + 2 * (colW + gap)
             let col2W = workArea.origin.x + workArea.width - col2X
 
-            resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-            resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-            resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(workArea.height))
+            if mainCount == 1 {
+                // 1 Main: Main in center (col1), Supporting 1 on left (col0), Supporting 2 on right (col2)
+                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(workArea.height))
+            } else {
+                // 2 Mains: Main 1 on left (col0), Main 2 in center (col1), Supporting on right (col2)
+                resultFrames[0] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                resultFrames[1] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(workArea.height))
+            }
             return resultFrames
         }
 
         // 4+ Windows
-        // Case A: Wenn KEIN Master-Fenster gesetzt ist (masterWindowID == nil) -> Gleichmäßiges Raster mit 100% Flächennutzung (0% Lücken)!
-        if masterWindowID == nil {
+        // Case A: Wenn KEINE Main-Fenster gesetzt sind (mainCount == 0) oder alle Main sind (mainCount >= count)
+        // -> Gleichmäßiges Raster mit 100% Flächennutzung (0% Lücken)!
+        if mainCount == 0 || mainCount >= count {
             if count == 4 {
                 let halfW = floor((workArea.width - gap) / 2.0)
                 let otherW = workArea.origin.x + workArea.width - (workArea.origin.x + halfW + gap)
@@ -1075,9 +1153,9 @@ class WindowManager {
             }
         }
 
-        // Case B: Master & Dual-Focus Layout (Master window active)
-        // Focus 1 (Master: windows[0]) and Focus 2 (Secondary: windows[1]) are GUARANTEED to be the two largest windows.
-        // 100% display area is utilized with ZERO empty voids/holes!
+        // Case B: Multi-Main & Supporting Windows Layout (mainCount in 1..<count)
+        // Main windows: windows[0..<mainCount] receive prominent column/top placement.
+        // Supporting windows: windows[mainCount..<count] neatly stack in remaining slots with 100% area utilization (0% voids/holes).
         if is4K {
             let colW = floor((workArea.width - 2 * gap) / 3.0)
             let col0X = workArea.origin.x
@@ -1085,12 +1163,60 @@ class WindowManager {
             let col2X = workArea.origin.x + 2 * (colW + gap)
             let col2W = workArea.origin.x + workArea.width - col2X
 
+            if mainCount == 3 {
+                if count == 4 {
+                    // Col 0: Main 1 (100% height)
+                    resultFrames[0] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                    // Col 1: Main 2 (100% height)
+                    resultFrames[1] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                    // Col 2: Main 3 (top 60%) + Supporting 1 (bottom 40%)
+                    let topH = floor((workArea.height - gap) * 0.60)
+                    let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+                    resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(topH))
+                    resultFrames[3] = CGRect(x: floor(col2X), y: floor(workArea.origin.y + topH + gap), width: floor(col2W), height: floor(botH))
+                    return resultFrames
+                }
+                if count == 5 {
+                    let topH = floor((workArea.height - gap) * 0.60)
+                    let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+                    let botY = workArea.origin.y + topH + gap
+                    // Col 0: Main 1 (top 60%) + Supporting 1 (bottom 40%)
+                    resultFrames[0] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                    resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
+                    // Col 1: Main 2 (top 60%) + Supporting 2 (bottom 40%)
+                    resultFrames[1] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                    resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
+                    // Col 2: Main 3 (100% full height)
+                    resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(workArea.height))
+                    return resultFrames
+                }
+                if count == 6 {
+                    let topH = floor((workArea.height - gap) * 0.60)
+                    let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
+                    let botY = workArea.origin.y + topH + gap
+                    // Col 0: Main 1 + Supporting 1
+                    resultFrames[0] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                    resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
+                    // Col 1: Main 2 + Supporting 2
+                    resultFrames[1] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                    resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
+                    // Col 2: Main 3 + Supporting 3
+                    resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(topH))
+                    resultFrames[5] = CGRect(x: floor(col2X), y: floor(botY), width: floor(col2W), height: floor(botH))
+                    return resultFrames
+                }
+            }
+
+            // mainCount == 1 or mainCount == 2
+            let c0Idx = (mainCount == 2) ? 0 : 1
+            let c1Idx = (mainCount == 2) ? 1 : 0
+
             if count == 4 {
-                // Col 0: Focus 2 (100% full height!)
-                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-                // Col 1: Master (100% full height, centered!)
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-                // Col 2: 2 windows stacked (each 50% height)
+                // Col 0: Main 1 (or Supporting 1 if mainCount==1)
+                resultFrames[c0Idx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                // Col 1: Main 2 (or Main 1 centered if mainCount==1)
+                resultFrames[c1Idx] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                // Col 2: 2 supporting windows stacked (each 50% height)
                 let halfH = floor((workArea.height - gap) / 2.0)
                 let botH = workArea.origin.y + workArea.height - (workArea.origin.y + halfH + gap)
                 resultFrames[2] = CGRect(x: floor(col2X), y: floor(workArea.origin.y), width: floor(col2W), height: floor(halfH))
@@ -1099,10 +1225,8 @@ class WindowManager {
             }
 
             if count == 5 {
-                // Col 0: Focus 2 (100% full height!)
-                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
-                // Col 1: Master (100% full height, centered!)
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                resultFrames[c0Idx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
+                resultFrames[c1Idx] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(workArea.height))
                 // Col 2: 3 auxiliary windows stacked (each 33.3% height)
                 let cellH = floor((workArea.height - 2 * gap) / 3.0)
                 let botH = workArea.origin.y + workArea.height - (workArea.origin.y + 2 * (cellH + gap))
@@ -1113,19 +1237,16 @@ class WindowManager {
             }
 
             if count == 6 {
-                // 3 Equal Columns, 2 Tiers: Top 2/3 height, Bottom 1/3 height
-                // Master centered in Col 1 Top; Focus 2 in Col 0 Top; Window 2 in Col 2 Top
-                // Bottom row: Windows 3, 4, 5 under Cols 0, 1, 2
                 let topH = floor((workArea.height - gap) * (2.0 / 3.0))
                 let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
                 let botY = workArea.origin.y + topH + gap
 
                 // Col 0
-                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[c0Idx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
                 resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
 
-                // Col 1 (Center)
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                // Col 1
+                resultFrames[c1Idx] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
                 resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
 
                 // Col 2
@@ -1142,10 +1263,10 @@ class WindowManager {
                 let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
                 let botY = workArea.origin.y + topH + gap
 
-                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[c0Idx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
                 resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
 
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[c1Idx] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
                 resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
 
                 let cellH = floor((workArea.height - 2 * gap) / 3.0)
@@ -1157,17 +1278,14 @@ class WindowManager {
             }
 
             if count == 8 {
-                // Col 0: Focus 2 (top 2/3) + Window 3 (bottom 1/3)
-                // Col 1: Master (top 2/3, centered) + Window 4 (bottom 1/3)
-                // Col 2: 4 windows stacked (Window 2, 5, 6, 7, each 1/4 height)
                 let topH = floor((workArea.height - gap) * (2.0 / 3.0))
                 let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
                 let botY = workArea.origin.y + topH + gap
 
-                resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[c0Idx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
                 resultFrames[3] = CGRect(x: floor(col0X), y: floor(botY), width: floor(colW), height: floor(botH))
 
-                resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+                resultFrames[c1Idx] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
                 resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
 
                 let cellH = floor((workArea.height - 3 * gap) / 4.0)
@@ -1184,8 +1302,8 @@ class WindowManager {
             let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
             let botY = workArea.origin.y + topH + gap
 
-            resultFrames[1] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
-            resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+            resultFrames[c0Idx] = CGRect(x: floor(col0X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+            resultFrames[c1Idx] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
 
             let rem = count - 2
             let c0Extra = rem / 3
@@ -1231,6 +1349,9 @@ class WindowManager {
         }
 
         // Non-4K (Standard displays e.g. MacBook built-in screens)
+        let c0Idx = (mainCount == 2) ? 0 : 1
+        let c1Idx = (mainCount == 2) ? 1 : 0
+
         if count == 4 {
             let halfW = floor((workArea.width - gap) / 2.0)
             let otherW = workArea.origin.x + workArea.width - (workArea.origin.x + halfW + gap)
@@ -1238,12 +1359,12 @@ class WindowManager {
             let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
             let botY = workArea.origin.y + topH + gap
 
-            // Col 0: Focus 2 (top 60%) + Window 2 (bottom 40%)
-            resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(halfW), height: floor(topH))
+            // Col 0: Main 1 (or Supporting 1) top 60% + Window 2 bottom 40%
+            resultFrames[c0Idx] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(halfW), height: floor(topH))
             resultFrames[2] = CGRect(x: floor(workArea.origin.x), y: floor(botY), width: floor(halfW), height: floor(botH))
 
-            // Col 1: Master (top 60%) + Window 3 (bottom 40%)
-            resultFrames[0] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: floor(otherW), height: floor(topH))
+            // Col 1: Main 2 (or Main 1) top 60% + Window 3 bottom 40%
+            resultFrames[c1Idx] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: floor(otherW), height: floor(topH))
             resultFrames[3] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(botY), width: floor(otherW), height: floor(botH))
             return resultFrames
         }
@@ -1255,9 +1376,9 @@ class WindowManager {
             let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
             let botY = workArea.origin.y + topH + gap
 
-            // Top tier: Focus 2 (left) and Master (right)
-            resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(halfW), height: floor(topH))
-            resultFrames[0] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: floor(otherW), height: floor(topH))
+            // Top tier: Main windows
+            resultFrames[c0Idx] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(halfW), height: floor(topH))
+            resultFrames[c1Idx] = CGRect(x: floor(workArea.origin.x + halfW + gap), y: floor(workArea.origin.y), width: floor(otherW), height: floor(topH))
 
             // Bottom tier: 3 windows evenly distributed
             let botW = floor((workArea.width - 2 * gap) / 3.0)
@@ -1278,7 +1399,7 @@ class WindowManager {
             for i in 0..<3 {
                 let cx = workArea.origin.x + CGFloat(i) * (colW + gap)
                 let thisW = (i == 2) ? (workArea.origin.x + workArea.width - cx) : colW
-                let topIdx = (i == 0) ? 1 : ((i == 1) ? 0 : 2) // Col 0: Focus 2, Col 1: Master, Col 2: Win 2
+                let topIdx = (i == 0) ? c0Idx : ((i == 1) ? c1Idx : 2)
                 resultFrames[topIdx] = CGRect(x: floor(cx), y: floor(workArea.origin.y), width: floor(thisW), height: floor(topH))
                 let botIdx = 3 + i
                 resultFrames[botIdx] = CGRect(x: floor(cx), y: floor(botY), width: floor(thisW), height: floor(botH))
@@ -1292,11 +1413,11 @@ class WindowManager {
         let botH = workArea.origin.y + workArea.height - (workArea.origin.y + topH + gap)
         let botY = workArea.origin.y + topH + gap
 
-        resultFrames[1] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+        resultFrames[c0Idx] = CGRect(x: floor(workArea.origin.x), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
         resultFrames[3] = CGRect(x: floor(workArea.origin.x), y: floor(botY), width: floor(colW), height: floor(botH))
 
         let col1X = workArea.origin.x + colW + gap
-        resultFrames[0] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
+        resultFrames[c1Idx] = CGRect(x: floor(col1X), y: floor(workArea.origin.y), width: floor(colW), height: floor(topH))
         resultFrames[4] = CGRect(x: floor(col1X), y: floor(botY), width: floor(colW), height: floor(botH))
 
         let col2X = workArea.origin.x + 2 * (colW + gap)
@@ -1445,14 +1566,13 @@ class WindowManager {
     func collectWindowsOnCurrentSpace(screenBounds: CGRect, ignoredApps: Set<String>, config: Config) -> [ManagedWindow] {
         reloadLockedWindowIDs()
         reloadFloatingWindowIDs()
-        reloadMasterWindowID()
-        reloadSecondaryFocusWindowID()
+        reloadMainWindowIDs()
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let cgWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
 
-        // Clean up stale locked and floating window IDs from closed windows
+        // Clean up stale locked, floating, and main window IDs from closed windows
         let allWins = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         let allIDs = Set(allWins.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
         let deadIDs = lockedWindowIDs.subtracting(allIDs)
@@ -1465,13 +1585,12 @@ class WindowManager {
             floatingWindowIDs.subtract(deadFloatIDs)
             persistFloatingWindowIDs()
         }
-        if let mid = masterWindowID, !allIDs.contains(mid) {
-            masterWindowID = nil
-            persistMasterWindowID()
-        }
-        if let sid = secondaryFocusWindowID, !allIDs.contains(sid) {
-            secondaryFocusWindowID = nil
-            persistSecondaryFocusWindowID()
+        let deadMainIDs = mainWindowIDs.filter { !allIDs.contains($0) }
+        if !deadMainIDs.isEmpty {
+            stateLock.lock()
+            mainWindowIDs.removeAll { deadMainIDs.contains($0) }
+            stateLock.unlock()
+            persistMainWindowIDs()
         }
 
         var onScreenMap: [CGWindowID: (order: Int, owner: String, title: String, bounds: CGRect)] = [:]

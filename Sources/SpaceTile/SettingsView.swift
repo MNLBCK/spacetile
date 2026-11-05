@@ -151,25 +151,22 @@ struct AnimatedTileVisualizer: View {
 
     private func miniTile(frame: CGRect) -> some View {
         RoundedRectangle(cornerRadius: 1.5)
-            .fill(Color(red: 0.22, green: 0.22, blue: 0.25))
+            .fill(Color(red: 0.44, green: 0.47, blue: 0.56))
             .overlay(
                 RoundedRectangle(cornerRadius: 1.5)
-                    .stroke(Color.white.opacity(0.18), lineWidth: 0.6)
+                    .stroke(Color.white.opacity(0.85), lineWidth: 0.8)
             )
             .frame(width: max(0, frame.width), height: max(0, frame.height))
             .offset(x: frame.origin.x, y: frame.origin.y)
     }
 }
 
-// MARK: - Live Grid Interactive Visualizer (Exact Usable Aspect Ratio, Real Windows, Semi-Transparent, Drag & Drop Swap, Double-Click Master)
+// MARK: - Live Grid Interactive Visualizer (Exact Usable Aspect Ratio, Real Windows, Semi-Transparent, Drag & Drop Swap, Double-Click Main)
 struct LiveGridView: View {
     let windows: [ManagedWindow]
-    let masterWindowID: CGWindowID?
-    let secondaryFocusWindowID: CGWindowID?
-    let onSetMasterAndRearrange: (CGWindowID, String) -> Void
-    let onClearMaster: () -> Void
-    let onSetSecondaryFocus: (CGWindowID) -> Void
-    let onClearSecondaryFocus: () -> Void
+    let mainIDs: [CGWindowID]
+    let onToggleMain: (CGWindowID, String) -> Void
+    let onClearAllMain: () -> Void
     let onToggleLock: (CGWindowID) -> Void
     let onToggleFloat: (CGWindowID) -> Void
     let onSwapWindows: (CGWindowID, CGWindowID) -> Void
@@ -195,7 +192,7 @@ struct LiveGridView: View {
                     Image(systemName: "arrow.triangle.swap")
                         .font(.caption2)
                         .foregroundColor(.cyan)
-                    Text("Drag to swap slots • Double-click or Right-click to set Master")
+                    Text("Drag to swap slots • Double-click or Right-click to toggle Main (⭐)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -296,7 +293,7 @@ struct LiveGridView: View {
         }
     }
 
-    private func windowBoxHeader(win: ManagedWindow, isMaster: Bool, isSecondaryFocus: Bool, isDropTarget: Bool) -> some View {
+    private func windowBoxHeader(win: ManagedWindow, isMain: Bool, isDropTarget: Bool) -> some View {
         HStack(spacing: 3) {
             Circle().fill(Color.red.opacity(0.85)).frame(width: 5, height: 5)
             Circle().fill(Color.orange.opacity(0.85)).frame(width: 5, height: 5)
@@ -323,18 +320,11 @@ struct LiveGridView: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 8))
                     .foregroundColor(.orange)
-            } else if isMaster {
-                Text("★ MASTER")
+            } else if isMain {
+                Text("⭐ MAIN")
                     .font(.system(size: 7, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 3).padding(.vertical, 1)
                     .background(Color.cyan.opacity(0.35))
-                    .foregroundColor(.cyan)
-                    .cornerRadius(2)
-            } else if isSecondaryFocus {
-                Text("◈ FOCUS")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 3).padding(.vertical, 1)
-                    .background(Color.blue.opacity(0.35))
                     .foregroundColor(.cyan)
                     .cornerRadius(2)
             }
@@ -357,8 +347,7 @@ struct LiveGridView: View {
         let boxW = relW * canvasW
         let boxH = relH * canvasH
 
-        let isMaster = (masterWindowID != nil && win.id == masterWindowID)
-        let isSecondaryFocus = (secondaryFocusWindowID != nil && win.id == secondaryFocusWindowID)
+        let isMain = mainIDs.contains(win.id)
         let isBeingDragged = (draggedWindowID == win.id)
         let isDropTarget = (hoveredDropTargetID == win.id)
 
@@ -367,25 +356,23 @@ struct LiveGridView: View {
             if isBeingDragged { return Color.white }
             if win.isFloating { return Color.purple.opacity(0.85) }
             if win.isLocked { return Color.orange.opacity(0.85) }
-            if isMaster { return Color.cyan.opacity(0.85) }
-            if isSecondaryFocus { return Color.blue.opacity(0.85) }
-            return Color.primary.opacity(0.25)
+            if isMain { return Color.cyan.opacity(0.85) }
+            return Color.white.opacity(0.20)
         }()
 
         let bgColor: Color = {
             if isDropTarget { return Color.cyan.opacity(0.48) }
             if isBeingDragged { return Color.cyan.opacity(0.40) }
             if win.isFloating { return Color.purple.opacity(0.30) }
-            if isMaster { return Color.cyan.opacity(0.32) }
-            if isSecondaryFocus { return Color.blue.opacity(0.28) }
-            return Color(NSColor.controlAccentColor).opacity(0.20)
+            if isMain { return Color.cyan.opacity(0.32) }
+            return Color(red: 0.22, green: 0.25, blue: 0.32).opacity(0.45)
         }()
 
         let curX = isBeingDragged ? (boxX + dragTranslation.width) : boxX
         let curY = isBeingDragged ? (boxY + dragTranslation.height) : boxY
 
         return VStack(alignment: .leading, spacing: 2) {
-            windowBoxHeader(win: win, isMaster: isMaster, isSecondaryFocus: isSecondaryFocus, isDropTarget: isDropTarget)
+            windowBoxHeader(win: win, isMain: isMain, isDropTarget: isDropTarget)
 
             if boxH > 35 && !win.title.isEmpty {
                 Text(win.title)
@@ -398,36 +385,22 @@ struct LiveGridView: View {
         .padding(4)
         .frame(width: boxW, height: boxH)
         .background(bgColor)
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: (isDropTarget || isMaster || isSecondaryFocus) ? 2.0 : 1.0))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor, lineWidth: (isDropTarget || isMain) ? 2.0 : 1.0))
         .cornerRadius(4)
         .shadow(color: isBeingDragged ? Color.black.opacity(0.45) : Color.clear, radius: 8, x: 0, y: 4)
         .scaleEffect(isBeingDragged ? 1.04 : (isDropTarget ? 1.02 : 1.0))
         .zIndex(isBeingDragged ? 999 : (isDropTarget ? 500 : Double(100 - index)))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            if isMaster {
-                onClearMaster()
-            } else {
-                onSetMasterAndRearrange(win.id, win.appName)
-            }
+            onToggleMain(win.id, win.appName)
         }
         .contextMenu {
-            if isMaster {
-                Button("Master aufheben (Darstellung ohne Master)") {
-                    onClearMaster()
-                }
-            } else if !win.isLocked && !win.isFloating {
-                Button("Set as Master Window") {
-                    onSetMasterAndRearrange(win.id, win.appName)
-                }
+            Button(isMain ? "Aus Main-Fenstern entfernen" : "Zu Main-Fenstern hinzufügen") {
+                onToggleMain(win.id, win.appName)
             }
-            if isSecondaryFocus {
-                Button("Fokus aufheben") {
-                    onClearSecondaryFocus()
-                }
-            } else if !win.isLocked && !win.isFloating && !isMaster {
-                Button("Als zweites Fokus-Fenster setzen") {
-                    onSetSecondaryFocus(win.id)
+            if !mainIDs.isEmpty {
+                Button("Alle Main aufheben (Gleichmäßiges Raster)") {
+                    onClearAllMain()
                 }
             }
             if !win.isFloating {
@@ -495,8 +468,9 @@ struct SettingsView: View {
     }
     @State private var statusMessage: String?
     @State private var currentWindows: [ManagedWindow] = []
-    @State private var currentMasterID: CGWindowID? = WindowManager.shared.masterWindowID
-    @State private var currentSecondaryFocusID: CGWindowID? = WindowManager.shared.secondaryFocusWindowID
+    @State private var currentMainIDs: [CGWindowID] = WindowManager.shared.mainWindowIDs
+    private var currentMasterID: CGWindowID? { currentMainIDs.first }
+    private var currentSecondaryFocusID: CGWindowID? { currentMainIDs.count > 1 ? currentMainIDs[1] : nil }
     @State private var selectedTab: Int
     @State private var recordingField: String? = nil
     @State private var showFeedbackSheet: Bool = false
@@ -561,64 +535,39 @@ struct SettingsView: View {
 
                 Spacer()
 
-                // Status Pills Shifted to the Right
-                HStack(spacing: 8) {
-                    if isAccessibilityGranted {
-                        Label("Accessibility: Granted", systemImage: "checkmark.circle.fill")
-                            .font(.caption.bold())
-                            .foregroundColor(.green)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(Color.green.opacity(0.15))
-                            .clipShape(Capsule())
-                    } else {
-                        Label("Accessibility: Required", systemImage: "exclamationmark.triangle.fill")
+                // Status & Action in One Single Aligned Line on the Right
+                HStack(spacing: 12) {
+                    if !isAccessibilityGranted {
+                        Label("Accessibility Required", systemImage: "exclamationmark.triangle.fill")
                             .font(.caption.bold())
                             .foregroundColor(.white)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
                             .background(Color.red)
                             .clipShape(Capsule())
                     }
 
                     Label(daemonStatus.isRunning ? "Daemon Active" : "Daemon Stopped", systemImage: daemonStatus.isRunning ? "bolt.fill" : "pause.fill")
-                        .font(.caption.bold())
+                        .font(.subheadline.bold())
                         .foregroundColor(daemonStatus.isRunning ? .cyan : .orange)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
                         .background((daemonStatus.isRunning ? Color.cyan : Color.orange).opacity(0.15))
                         .clipShape(Capsule())
-                }
 
-                // Feedback & Bug Reporter Button
-                Button(action: {
-                    feedbackSheetType = .feature
-                    showFeedbackSheet = true
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bubble.left.and.exclamationmark.bubble.right.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("Feedback & Bugs")
-                            .font(.caption.bold())
+                    // Prominently Taller Rearrange Now Button (60px Height)
+                    Button(action: triggerOptimizeNow) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 18, weight: .bold))
+                            Text("Rearrange Now")
+                                .font(.system(size: 16, weight: .bold))
+                        }
+                        .frame(height: 60)
+                        .padding(.horizontal, 22)
                     }
-                    .frame(height: 38)
-                    .padding(.horizontal, 10)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(.cyan)
                 }
-                .buttonStyle(.bordered)
-                .tint(.cyan)
-                .help("Neue Funktion vorschlagen oder Fehler mit Logs auf GitHub melden")
-
-                // Prominently Taller Rearrange Now Button (60px Height)
-                Button(action: triggerOptimizeNow) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 18, weight: .bold))
-                        Text("Rearrange Now")
-                            .font(.system(size: 16, weight: .bold))
-                    }
-                    .frame(height: 60)
-                    .padding(.horizontal, 22)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .tint(.cyan)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
@@ -820,19 +769,12 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             LiveGridView(
                 windows: currentWindows,
-                masterWindowID: currentMasterID,
-                secondaryFocusWindowID: currentSecondaryFocusID,
-                onSetMasterAndRearrange: { winID, appName in
-                    promoteToMaster(id: winID, appName: appName)
+                mainIDs: currentMainIDs,
+                onToggleMain: { winID, appName in
+                    toggleMainWindow(id: winID)
                 },
-                onClearMaster: {
-                    clearMaster()
-                },
-                onSetSecondaryFocus: { winID in
-                    setSecondaryFocus(id: winID)
-                },
-                onClearSecondaryFocus: {
-                    clearSecondaryFocus()
+                onClearAllMain: {
+                    clearAllMain()
                 },
                 onToggleLock: { winID in
                     let isLocked = WindowManager.shared.lockedWindowIDs.contains(winID)
@@ -894,7 +836,7 @@ struct SettingsView: View {
                     Text("Aktionen")
                         .font(.caption2.bold())
                         .foregroundColor(.secondary)
-                        .frame(width: 270, alignment: .trailing)
+                        .frame(width: 210, alignment: .trailing)
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 2)
@@ -914,8 +856,7 @@ struct SettingsView: View {
     }
 
     private func activeWindowRow(index: Int, win: ManagedWindow) -> some View {
-        let isMaster = (currentMasterID != nil && win.id == currentMasterID)
-        let isSecondaryFocus = (currentSecondaryFocusID != nil && win.id == currentSecondaryFocusID)
+        let isMain = currentMainIDs.contains(win.id)
         return HStack(spacing: 8) {
             // 1. App Name (fixed 125px)
             Text(win.appName)
@@ -939,22 +880,15 @@ struct SettingsView: View {
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.orange.opacity(0.18))
                         .cornerRadius(4)
-                } else if isMaster {
-                    Text("★ Master")
-                        .font(.caption2.bold())
-                        .foregroundColor(.green)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Color.green.opacity(0.18))
-                        .cornerRadius(4)
-                } else if isSecondaryFocus {
-                    Text("◈ Focus")
+                } else if isMain {
+                    Text("⭐ Main")
                         .font(.caption2.bold())
                         .foregroundColor(.cyan)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.cyan.opacity(0.18))
                         .cornerRadius(4)
                 } else {
-                    Text("Tiled")
+                    Text("🪟 Support")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -1005,7 +939,7 @@ struct SettingsView: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            // 5. Action Buttons (fixed 270px, aligned columns)
+            // 5. Action Buttons (fixed 210px, aligned columns)
             HStack(spacing: 5) {
                 Button(win.isFloating ? "Unfloat" : "Float") {
                     WindowManager.shared.setWindowFloating(id: win.id, floating: !win.isFloating)
@@ -1028,69 +962,48 @@ struct SettingsView: View {
                     Spacer().frame(width: 58)
                 }
 
-                if isMaster {
+                if isMain {
                     Button(action: {
-                        clearMaster()
+                        removeMainWindow(id: win.id)
                     }) {
                         HStack(spacing: 3) {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 10, weight: .heavy))
-                            Text("Master")
+                            Text("Main")
                                 .font(.caption2.bold())
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.green)
-                    .controlSize(.small)
-                    .frame(width: 74)
-                    .help("Klicken, um Master-Status aufzuheben (Darstellung ohne Master)")
-                } else if !win.isLocked && !win.isFloating {
-                    Button("Set Master") {
-                        promoteToMaster(id: win.id, appName: win.appName)
-                    }
-                    .buttonStyle(.borderedProminent)
                     .tint(.cyan)
                     .controlSize(.small)
                     .frame(width: 74)
+                    .help("Klicken, um aus Main-Fenstern zu entfernen")
+                } else if !win.isLocked && !win.isFloating {
+                    Button(action: {
+                        addMainWindow(id: win.id)
+                    }) {
+                        Text("+ Main")
+                            .font(.caption2.bold())
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.cyan)
+                    .controlSize(.small)
+                    .frame(width: 74)
+                    .help("Klicken, um als Main-Fenster hinzuzufügen")
                 } else {
                     Spacer().frame(width: 74)
                 }
-
-                if isSecondaryFocus {
-                    Button("Unfocus") {
-                        clearSecondaryFocus()
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.cyan)
-                    .controlSize(.small)
-                    .frame(width: 64)
-                    .help("Fokus aufheben")
-                } else if !win.isLocked && !win.isFloating && !isMaster {
-                    Button("Focus") {
-                        setSecondaryFocus(id: win.id)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .frame(width: 64)
-                    .help("Als zweites Fokus-Fenster setzen")
-                } else {
-                    Spacer().frame(width: 64)
-                }
             }
-            .frame(width: 270, alignment: .trailing)
+            .frame(width: 210, alignment: .trailing)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.secondary.opacity(isMaster ? 0.12 : (isSecondaryFocus ? 0.08 : 0.05)))
+        .background(isMain ? Color.cyan.opacity(0.12) : Color.secondary.opacity(0.05))
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             if !win.isLocked && !win.isFloating {
-                if isMaster {
-                    clearMaster()
-                } else {
-                    promoteToMaster(id: win.id, appName: win.appName)
-                }
+                toggleMainWindow(id: win.id)
             }
         }
     }
@@ -1128,8 +1041,22 @@ struct SettingsView: View {
                     )
                     Divider()
                     shortcutRow(
-                        title: "Set Window as Master",
-                        desc: "Setzt das fokussierte Fenster als Master (schnelles doppeltes Drücken hebt Master auf)",
+                        title: "Fenster zu Main hinzufügen (+)",
+                        desc: "Macht das aktive Fenster zu einem hervorgehobenen Main-Fenster",
+                        shortcut: config.addMainShortcut,
+                        field: "addMain"
+                    )
+                    Divider()
+                    shortcutRow(
+                        title: "Aus Main-Fenstern entfernen (-)",
+                        desc: "Nimmt das aktive Fenster aus den Main-Fenstern heraus (wird Support-Fenster)",
+                        shortcut: config.removeMainShortcut,
+                        field: "removeMain"
+                    )
+                    Divider()
+                    shortcutRow(
+                        title: "Main-Status umschalten (Toggle)",
+                        desc: "Schaltet Main für aktives Fenster um (schnelles doppeltes Drücken hebt alle Main auf)",
                         shortcut: config.masterShortcut,
                         field: "master"
                     )
@@ -1176,13 +1103,13 @@ struct SettingsView: View {
                     .tint(.orange)
             } else {
                 Text(shortcut.cleanDisplayString)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundColor(.cyan)
-                    .padding(.horizontal, 14).padding(.vertical, 6)
-                    .background(Color.cyan.opacity(0.12))
+                    .padding(.horizontal, 16).padding(.vertical, 7)
+                    .background(Color.cyan.opacity(0.14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
+                            .stroke(Color.cyan.opacity(0.40), lineWidth: 1.2)
                     )
                     .cornerRadius(6)
 
@@ -1246,18 +1173,18 @@ struct SettingsView: View {
                             .fontWeight(.medium)
                         Spacer()
                         Picker("", selection: $config.animationMode) {
-                            Text("Direkt (Sofortiges Einrasten)").tag("instant")
+                            Text("Direkt (Sofort)").tag("instant")
                             Text("Flüssige Gleit-Animation").tag("smooth")
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(width: 360)
+                        .frame(width: 320)
                     }
 
                     if config.animationMode == "smooth" {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 24) {
-                                HStack {
+                                HStack(spacing: 8) {
                                     Text("Dauer:")
                                     Slider(value: $config.animationDuration, in: 0.06...0.35, step: 0.02)
                                     Text("\(Int(config.animationDuration * 1000)) ms")
@@ -1265,7 +1192,7 @@ struct SettingsView: View {
                                         .frame(width: 55)
                                 }
 
-                                HStack {
+                                HStack(spacing: 8) {
                                     Text("Schritte:")
                                     Slider(value: Binding(
                                         get: { Double(config.animationSteps) },
@@ -1280,12 +1207,13 @@ struct SettingsView: View {
                             Toggle("Fensterinhalte während Animation einfrieren", isOn: $config.freezeContentDuringResize)
                                 .font(.subheadline.bold())
                         }
+                        .padding(.top, 4)
                     }
                 }
-                .padding(8)
+                .padding(10)
             }
 
-            GroupBox(label: Label("Menüleiste & Dual-Focus", systemImage: "menubar.rectangle")) {
+            GroupBox(label: Label("Menüleiste & Schnellzugriff", systemImage: "menubar.rectangle")) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Schnellaktion (Linksklick auf Logo):")
@@ -1295,28 +1223,21 @@ struct SettingsView: View {
                             Text("Fenster anordnen (Rearrange)").tag("rearrange")
                             Text("Aktions-Menü öffnen (Kompakt)").tag("actions")
                             Text("Einstellungen öffnen").tag("settings")
-                            Text("Fokussiertes Fenster als Master").tag("master")
-                            Text("Master aufheben (Gleichmäßig)").tag("uniform")
+                            Text("Fenster zu Main hinzufügen (+)").tag("add_main")
+                            Text("Aus Main entfernen (-)").tag("remove_main")
+                            Text("Main-Status umschalten").tag("toggle_main")
+                            Text("Alle Main aufheben (Gleichmäßig)").tag("uniform")
                             Text("Vollständiges Menü öffnen").tag("menu")
                         }
                         .labelsHidden()
-                        .frame(width: 360)
+                        .frame(width: 340)
                     }
 
                     Text("Hinweis: Rechtsklick oder langes Drücken (> 0,35s) auf das Logo öffnet immer das vollständige Menü.")
                         .font(.caption)
                         .foregroundColor(.secondary)
-
-                    Divider()
-
-                    Toggle("Dual-Focus (Zweites Fenster als Fokus hervorheben)", isOn: $config.enableDualFocus)
-                        .font(.subheadline.bold())
-
-                    Text("Gibt neben dem Master-Fenster einem zweiten Hauptfenster (z. B. Browser oder Editor) maximalen Raum, sodass diese beiden die größten Fenster sind und 100% der Displayfläche ohne Lücken ausfüllen.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
-                .padding(8)
+                .padding(10)
             }
         }
     }
@@ -2010,6 +1931,8 @@ struct SettingsView: View {
 
             switch field {
             case "optimize": self.config.shortcut = newShortcut
+            case "addMain": self.config.addMainShortcut = newShortcut
+            case "removeMain": self.config.removeMainShortcut = newShortcut
             case "master": self.config.masterShortcut = newShortcut
             case "lock": self.config.lockShortcut = newShortcut
             case "float": self.config.floatShortcut = newShortcut
@@ -2159,12 +2082,10 @@ struct SettingsView: View {
 
     func refreshData() {
         checkStatus()
-        WindowManager.shared.reloadMasterWindowID()
-        WindowManager.shared.reloadSecondaryFocusWindowID()
+        WindowManager.shared.reloadMainWindowIDs()
         WindowManager.shared.reloadLockedWindowIDs()
         WindowManager.shared.reloadFloatingWindowIDs()
-        currentMasterID = WindowManager.shared.masterWindowID
-        currentSecondaryFocusID = WindowManager.shared.secondaryFocusWindowID
+        currentMainIDs = WindowManager.shared.mainWindowIDs
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let vf = screen.visibleFrame
         let primaryH = NSScreen.screens.first?.frame.height ?? vf.height
@@ -2172,25 +2093,41 @@ struct SettingsView: View {
         currentWindows = WindowManager.shared.collectWindowsOnCurrentSpace(screenBounds: axRect, ignoredApps: Set(config.ignoredApps), config: config)
     }
 
+    func addMainWindow(id: CGWindowID) {
+        showStatus("Fenster zu Main hinzugefügt...")
+        WindowManager.shared.addMainWindow(id: id)
+        currentMainIDs = WindowManager.shared.mainWindowIDs
+        triggerOptimizeNow()
+    }
+
+    func removeMainWindow(id: CGWindowID) {
+        showStatus("Aus Main-Fenstern entfernt...")
+        WindowManager.shared.removeMainWindow(id: id)
+        currentMainIDs = WindowManager.shared.mainWindowIDs
+        triggerOptimizeNow()
+    }
+
+    func toggleMainWindow(id: CGWindowID) {
+        WindowManager.shared.toggleMainWindow(id: id)
+        currentMainIDs = WindowManager.shared.mainWindowIDs
+        showStatus(currentMainIDs.contains(id) ? "Als Main-Fenster gesetzt..." : "Aus Main-Fenstern entfernt...")
+        triggerOptimizeNow()
+    }
+
+    func clearAllMain() {
+        showStatus("Alle Main-Fenster aufgehoben (Gleichmäßiges Raster)...")
+        WindowManager.shared.clearMainWindows()
+        currentMainIDs = []
+        triggerOptimizeNow()
+    }
+
     func setSecondaryFocus(id: CGWindowID) {
-        currentSecondaryFocusID = id
-        showStatus("Set window as Secondary Focus...")
-        DispatchQueue.global(qos: .userInitiated).async {
-            WindowManager.shared.setSecondaryFocusWindow(id: id)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                self.refreshData()
-            }
-        }
+        addMainWindow(id: id)
     }
 
     func clearSecondaryFocus() {
-        currentSecondaryFocusID = nil
-        showStatus("Secondary Focus aufgehoben...")
-        DispatchQueue.global(qos: .userInitiated).async {
-            WindowManager.shared.clearSecondaryFocusWindow()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                self.refreshData()
-            }
+        if currentMainIDs.count > 1 {
+            removeMainWindow(id: currentMainIDs[1])
         }
     }
 
@@ -2206,31 +2143,11 @@ struct SettingsView: View {
     }
 
     func promoteToMaster(id: CGWindowID, appName: String) {
-        currentMasterID = id
-        if let idx = currentWindows.firstIndex(where: { $0.id == id }) {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                let chosen = currentWindows.remove(at: idx)
-                currentWindows.insert(chosen, at: 0)
-            }
-        }
-        showStatus("Set '\(appName)' as Master & rearranging...")
-        DispatchQueue.global(qos: .userInitiated).async {
-            WindowManager.shared.setMasterWindow(id: id)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                self.refreshData()
-            }
-        }
+        addMainWindow(id: id)
     }
 
     func clearMaster() {
-        currentMasterID = nil
-        showStatus("Master aufgehoben – Anordnung im gleichmäßigen Raster...")
-        DispatchQueue.global(qos: .userInitiated).async {
-            WindowManager.shared.clearMasterWindow()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                self.refreshData()
-            }
-        }
+        clearAllMain()
     }
 
     func showStatus(_ msg: String) {
